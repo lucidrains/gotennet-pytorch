@@ -50,6 +50,9 @@ dev-dependencies = [
     "pytest-cov>=5.0.0",
 ]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
