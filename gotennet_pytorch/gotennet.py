@@ -37,9 +37,9 @@ class EquivariantFeedForward(Module):
 
         mlp_dim = int(mlp_expansion_factor * dim * 2)
 
-        # degrees - 1, as zeroth degree is concatted to all normed higher degrees
+        self.proj = ParameterList([nn.Parameter(torch.randn(dim, dim)) for _ in range(max_num_degrees)])
 
-        self.higher_degree_projs = ParameterList([nn.Parameter(torch.randn(dim, dim)) for _ in range(max_num_degrees - 1)])
+        self.pre_mlp_proj = ParameterList([nn.Parameter(torch.randn(dim, dim)) for _ in range(max_num_degrees)])
 
         self.mlps = ModuleList([
             Sequential(Linear(dim * 2, mlp_dim), nn.SiLU(), Linear(mlp_dim, dim * 2))
@@ -55,20 +55,28 @@ class EquivariantFeedForward(Module):
         h_residual = 0.
         x_residuals = []
 
-        for one_degree, proj, mlp in zip(x, self.higher_degree_projs, self.mlps):
+        for one_degree, proj, pre_mlp_proj, mlp in zip(x, self.projs, self.pre_mlp_projs, self.mlps):
 
-            one_degree = einsum('... d m, ... d e -> ... e m', one_degree, proj)
+            # make higher degree tensor invariant through norm on `m` axis and then concat -> mlp -> split
 
-            normed_invariant = l2norm(one_degree)
+            proj_one_degree_for_mlp = einsum('... d m, ... d e -> ... e m', one_degree, pre_mlp_proj)
+
+            normed_invariant = l2norm(proj_one_degree_for_mlp)
 
             mlp_inp = torch.cat((x, normed_invariant))
             mlp_out = mlp(mlp_inp)
 
             m1, m2 = mlp_out.chunk(2, dim = -1) # named m1, m2 in equation 13, one is the residual for h, the other modulates the projected higher degree tensor for its residual
 
-            h_residual = h_residual + m1
+            # in a stray comment on openreview, W_vu can be two separate weight matrices for expressivity
 
-            modulated_one_degree = einx.multiply('... d m, d -> ... d m', one_degree, m2)
+            proj_one_degree = einsum('... d m, ... d e -> ... e m', one_degree, proj)
+
+            modulated_one_degree = einx.multiply('... d m, d -> ... d m', proj_one_degree, m2)
+
+            # aggregate residuals
+
+            h_residual = h_residual + m1
 
             x_residuals.append(modulated_one_degree)
 
