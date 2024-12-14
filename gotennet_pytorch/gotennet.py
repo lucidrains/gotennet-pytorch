@@ -75,7 +75,7 @@ class EquivariantFeedForward(Module):
         # handle residuals within the module
 
         h = h + h_residual
-        x = [sum(*args) for arg in zip(x, x_residuals)]
+        x = [*map(sum, zip(x, x_residuals))]
 
         return h, x
 
