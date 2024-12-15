@@ -222,6 +222,10 @@ class GeometryAwareTensorAttention(Module):
 
         edge_values = self.to_edge_values(t_ij)
 
+        # split out attention heads
+
+        queries, keys, values, post_attn_values, edge_keys, edge_values = map(self.split_heads, (queries, keys, values, post_attn_values, edge_keys, edge_values))
+
         # eq (6)
 
         # numerator - αij
@@ -277,14 +281,14 @@ class GotenNet(Module):
         dim,
         depth,
         max_degree,
-        head,
+        heads,
         dim_edge_refinement,
         dim_head = None,
         mlp_expansion_factor = 2.,
         ff_kwargs: dict = dict()
     ):
         super().__init__()
-        assert max_num_degrees > 0
+        assert max_degree > 0
 
         self.layers = ModuleList([])
 
