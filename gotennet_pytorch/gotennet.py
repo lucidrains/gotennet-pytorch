@@ -224,7 +224,7 @@ class GeometryAwareTensorAttention(Module):
         keys = self.to_keys(hj)
         values = self.to_values(hj)
 
-        post_attn_values = self.post_attn_h_values(h)
+        post_attn_values = self.post_attn_h_values(hj)
 
         edge_keys = self.to_edge_values(t_ij)
 
