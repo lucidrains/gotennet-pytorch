@@ -325,7 +325,7 @@ class GotenNet(Module):
         r_ij = []
 
         for degree in range(1, self.max_degree + 1):
-            one_degree_r_ij = spherical_harmonics(degree, rel_pos, normalize = True)
+            one_degree_r_ij = spherical_harmonics(degree, rel_pos, normalize = True, normalization = 'norm')
             r_ij.append(one_degree_r_ij)
 
         # go through the layers
@@ -333,4 +333,4 @@ class GotenNet(Module):
         for htr, attn, ff in self.layers:
             pass
   
-        return x, coors
+        return atom_ids, coors
