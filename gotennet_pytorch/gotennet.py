@@ -156,8 +156,11 @@ class GeometryAwareTensorAttention(Module):
 
         # eq (5) - layernorms are present in the diagram in figure 2. but not mentioned in the equations..
 
-        self.to_queries = Sequential(nn.LayerNorm(dim, bias = False), Linear(dim, dim_inner, bias = False))
-        self.to_keys = Sequential(nn.LayerNorm(dim, bias = False), Linear(dim, dim_inner, bias = False))
+        self.to_hi = nn.LayerNorm(dim, bias = False)
+        self.to_hj = nn.LayerNorm(dim, bias = False)
+
+        self.to_queries = Linear(dim, dim_inner, bias = False)
+        self.to_keys = Linear(dim, dim_inner, bias = False)
 
         dim_mlp_inner = int(mlp_expansion_factor * dim_inner)
 
@@ -213,9 +216,13 @@ class GeometryAwareTensorAttention(Module):
 
         # eq (5)
 
-        queries = self.to_queries(h)
-        keys = self.to_keys(h)
-        values = self.to_values(h)
+        hi = self.to_hi(h)
+        hj = self.to_hj(h)
+
+        queries = self.to_queries(hi)
+
+        keys = self.to_keys(hj)
+        values = self.to_values(hj)
 
         post_attn_values = self.post_attn_h_values(h)
 
