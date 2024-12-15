@@ -276,7 +276,11 @@ class GotenNet(Module):
         self,
         dim,
         depth,
-        max_num_degrees,
+        max_degree,
+        head,
+        dim_edge_refinement,
+        dim_head = None,
+        mlp_expansion_factor = 2.,
         ff_kwargs: dict = dict()
     ):
         super().__init__()
@@ -286,7 +290,9 @@ class GotenNet(Module):
 
         for _ in range(depth):
             self.layers.append(ModuleList([
-                EquivariantFeedForward(dim, max_num_degrees, **ff_kwargs)
+                HierarchicalTensorRefinement(dim, dim_edge_refinement, max_degree),
+                GeometryAwareTensorAttention(dim, max_degree, dim_head, heads, mlp_expansion_factor),
+                EquivariantFeedForward(dim, max_degree, mlp_expansion_factor),
             ]))
 
     def forward(
@@ -294,4 +300,8 @@ class GotenNet(Module):
         x,
         coors
     ):
+
+        for htr, attn, ff in self.layers:
+            pass
+  
         return x, coors
