@@ -324,7 +324,7 @@ class GotenNet(Module):
 
         r_ij = []
 
-        for degree in range(self.max_degree):
+        for degree in range(1, self.max_degree + 1):
             one_degree_r_ij = spherical_harmonics(degree, rel_pos, normalize = True)
             r_ij.append(one_degree_r_ij)
 
