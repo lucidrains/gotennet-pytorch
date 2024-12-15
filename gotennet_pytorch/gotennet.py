@@ -299,6 +299,7 @@ class GotenNet(Module):
     ):
         super().__init__()
         assert max_degree > 0
+        self.max_degree = max_degree
 
         self.layers = ModuleList([])
 
@@ -311,9 +312,23 @@ class GotenNet(Module):
 
     def forward(
         self,
-        x,
-        coors
+        atom_ids,
+        coors,
+        mask = None
     ):
+
+        rel_pos = einx.subtract('b i c, b j c -> b i j c')
+        rel_dist = rel_dir.norm(dim = -1)
+
+        # constitute r_ij from section 3.1
+
+        r_ij = []
+
+        for degree in range(self.max_degree):
+            one_degree_r_ij = spherical_harmonics(degree, rel_pos, normalize = True)
+            r_ij.append(one_degree_r_ij)
+
+        # go through the layers
 
         for htr, attn, ff in self.layers:
             pass
