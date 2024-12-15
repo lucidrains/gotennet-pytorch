@@ -101,7 +101,7 @@ class HierarchicalTensorRefinement(Module):
 
         self.to_queries = nn.Parameter(torch.randn(dim, dim_edge_refinement))
 
-        self.to_keys = ParameterList([nn.Parameter(torch.randn(dim, dim_edge_refinement)) for _ in range])
+        self.to_keys = ParameterList([nn.Parameter(torch.randn(dim, dim_edge_refinement)) for _ in range(max_degree)])
 
         # the two weight matrices
         # one for mixing the inner product between all queries and keys across degrees above
@@ -281,8 +281,8 @@ class GotenNet(Module):
         dim,
         depth,
         max_degree,
-        heads,
         dim_edge_refinement,
+        heads = 8,
         dim_head = None,
         mlp_expansion_factor = 2.,
         ff_kwargs: dict = dict()
