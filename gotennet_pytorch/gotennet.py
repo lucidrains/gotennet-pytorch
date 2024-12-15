@@ -9,6 +9,8 @@ import einx
 from einops import reduce
 from einops.layers.torch import Rearrange
 
+from e3nn.o3 import spherical_harmonics
+
 # helper functions
 
 def exists(v):
