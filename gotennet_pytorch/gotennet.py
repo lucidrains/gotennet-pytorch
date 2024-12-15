@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-from torch import nn, cat, stack, Tensor, einsum
+from torch import nn, cat, Tensor, einsum
 from torch.nn import Linear, Sequential, Module, ModuleList, ParameterList
 
 import einx
+from einops import reduce
 from einops.layers.torch import Rearrange
 
 # helper functions
@@ -59,7 +60,7 @@ class EquivariantFeedForward(Module):
 
             # make higher degree tensor invariant through norm on `m` axis and then concat -> mlp -> split
 
-            proj_one_degree = einsum('... d m, ... d e -> ... e m', one_degree, pre_mlp_proj)
+            proj_one_degree = einsum('... d m, ... d e -> ... e m', one_degree, proj)
 
             normed_invariant = l2norm(proj_one_degree)
 
@@ -127,6 +128,146 @@ class HierarchicalTensorRefinement(Module):
         w_ij = cat(inner_product, dim = -1)
 
         return self.edge_proj(w_ij) + self.residue_update(t_ij) # eq (12)
+
+# geometry-aware tensor attention
+# section 3.3
+
+class GeometryAwareTensorAttention(Module):
+    def __init__(
+        self,
+        dim,
+        max_degree,
+        dim_head = None,
+        heads = 8,
+        mlp_expansion_factor = 2.
+    ):
+        super().__init__()
+        assert max_degree > 0
+        self.max_degree = max_degree
+
+        dim_head = default(dim_head, dim)
+
+        # for some reason, there is no mention of attention heads, will just improvise
+
+        dim_inner = dim * dim_head
+
+        self.split_heads = Rearrange('b ... (h d) -> b h ... d', h = heads)
+        self.merge_heads = Rearrange('b h ... d -> b ... (h d)')
+
+        # eq (5)
+
+        self.to_queries_keys = Linear(dim, dim_inner * 2, bias = False)
+
+        dim_mlp_inner = int(mlp_expansion_factor * dim_inner)
+
+        # S contains two parts of L_max (one to modulate each degree of r_ij, another to modulate each X_j, then one final to modulate h). incidentally, this overlaps with eq. (m = 2 * L + 1), causing much confusion, cleared up in openreview
+
+        self.S = (1, max_degree, max_degree)
+        S = sum(self.S)
+
+        self.to_values = Sequential(
+            Linear(dim, dim_mlp_inner),
+            nn.SiLU(),
+            Linear(dim_mlp_inner, S * dim_inner),
+            Rearrange('... (s d) -> ... s d', s = S)
+        )
+
+        # eq (6) second half: t_ij -> edge scalar features
+
+        self.to_edge_keys = Sequential(
+            Linear(dim, S * dim_inner, bias = False),  # W_re
+            nn.SiLU(),                                 # σ_k - never indicated in paper. just use Silu
+            Rearrange('... (s d) -> ... s d', s = S)
+        )
+
+        # eq (7) - todo, handle cutoff radius
+
+        self.to_edge_values = nn.Sequential(           # t_ij modulating weighted sum
+            Linear(dim, S * dim_inner, bias = False),
+            Rearrange('... (s d) -> ... s d', s = S)
+        )
+
+        self.post_attn_h_values = Sequential(
+            Linear(dim, dim_mlp_inner),
+            nn.SiLU(),
+            Linear(dim_mlp_inner, S * dim_inner),
+            Rearrange('... (s d) -> ... s d', s = S)
+        )
+
+        # combine heads
+
+        self.combine_heads = Sequential(
+            Linear(dim_inner, dim, bias = False)
+        )
+
+    def forward(
+        self,
+        h: Tensor,
+        x: tuple[Tensor, ...],
+        t_ij: Tensor,
+        r_ij: tuple[Tensor, ...]
+    ):
+        assert len(x) == self.max_degree
+        assert len(r_ij) == self.max_degree
+
+        # eq (5)
+
+        queries, keys = self.to_queries_keys(h).chunk(2, dim = -1)
+
+        values = self.to_values(h)
+
+        post_attn_values = self.post_attn_h_values(h)
+
+        edge_keys = self.to_edge_values(t_ij)
+
+        edge_values = self.to_edge_values(t_ij)
+
+        # eq (6)
+
+        # numerator - αij
+
+        sim_num = einsum('... i d, ... j d -> ... i j', queries, keys)
+
+        # denominator - αik (?) - why is there a k-dimension? just play along for now
+
+        sim_den = einsum('... i, ... k s -> ... i s', queries, edge_keys)
+
+        # attention
+
+        attn = einx.divide('... i j, ... i s -> ... i j s', sim_num, sim_den)
+
+        # aggregate values
+
+        sea_ij = einsum('... i j s, ... j s d -> ... i j s d', attn, values)
+
+        # eq (7)
+
+        sea_ij = sea_ij + einx.multiply('... i j s d, ... j s d -> ... i j s d', edge_values, post_attn_values)
+
+        # combine heads - not in paper for some reason, but attention heads mentioned, so must be necessary?
+
+        out = self.merge_heads(sea_ij)
+
+        out = self.combine_heads(out)
+
+        # split out all the O's (eq 7 second half)
+
+        h_scales, r_ij_scales, x_scales = out.chunk(self.S, dim = -2)
+
+        # modulate with invariant scales and sum residuals
+
+        h_with_residual = h + reduce(h_scales, '... j d -> ... d', 'sum')
+
+        x_with_residual = []
+
+        for one_degree, one_r_ij, one_degree_scale, one_r_ij_scale in zip(x, r_ij, x_scales, r_ij_scales):
+
+            x_with_residual.append((
+                einx.multiply('... j d m, ... i j d -> ... i d m', one_degree, one_degree_scale) +
+                einx.multiply('... i j m, ... i j d -> ... i d m', one_r_ij, one_r_ij_scale)
+            ))
+
+        return h_with_residual, x_with_residual
 
 # main class
 
