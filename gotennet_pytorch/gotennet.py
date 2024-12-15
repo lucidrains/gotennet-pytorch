@@ -154,9 +154,10 @@ class GeometryAwareTensorAttention(Module):
         self.split_heads = Rearrange('b ... (h d) -> b h ... d', h = heads)
         self.merge_heads = Rearrange('b h ... d -> b ... (h d)')
 
-        # eq (5)
+        # eq (5) - layernorms are present in the diagram in figure 2. but not mentioned in the equations..
 
-        self.to_queries_keys = Linear(dim, dim_inner * 2, bias = False)
+        self.to_queries = Sequential(nn.LayerNorm(dim, bias = False), Linear(dim, dim_inner, bias = False))
+        self.to_keys = Sequential(nn.LayerNorm(dim, bias = False), Linear(dim, dim_inner, bias = False))
 
         dim_mlp_inner = int(mlp_expansion_factor * dim_inner)
 
@@ -212,8 +213,8 @@ class GeometryAwareTensorAttention(Module):
 
         # eq (5)
 
-        queries, keys = self.to_queries_keys(h).chunk(2, dim = -1)
-
+        queries = self.to_queries(h)
+        keys = self.to_keys(h)
         values = self.to_values(h)
 
         post_attn_values = self.post_attn_h_values(h)
