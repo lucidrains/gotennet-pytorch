@@ -362,6 +362,10 @@ class GeometryAwareTensorAttention(Module):
         queries = self.to_queries(hi)
 
         keys = self.to_keys(hj)
+
+        # unsure why values are split into two, with one elementwise-multiplied with the edge values coming from t_ij
+        # need another pair of eyes to double check
+
         values = self.to_values(hj)
 
         post_attn_values = self.post_attn_h_values(hj)
@@ -374,6 +378,8 @@ class GeometryAwareTensorAttention(Module):
         queries, keys, values, post_attn_values, edge_keys, edge_values = map(self.split_heads, (queries, keys, values, post_attn_values, edge_keys, edge_values))
 
         # eq (6)
+
+        # unsure why there is a k-dimension in the paper math notation, in addition to i, j
 
         keys = einx.multiply('... j d, ... i j s d -> ... i j s d', keys, edge_keys)
 
