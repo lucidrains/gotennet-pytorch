@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Sequence
 
 import torch
 from torch import nn, cat, Tensor, einsum
@@ -172,7 +173,7 @@ class EquivariantFeedForward(Module):
     def forward(
         self,
         h: Float['b n d'],
-        x: tuple[Float['b n d _'], ...]
+        x: Sequence[Float['b n d _'], ...]
     ):
         assert len(x) == self.max_degree
 
@@ -236,7 +237,7 @@ class HierarchicalTensorRefinement(Module):
     def forward(
         self,
         t_ij: Float['b n n d'],
-        x: tuple[Float['b n d _'], ...],
+        x: Sequence[Float['b n d _'], ...],
     ) -> Float['b n n d']:
 
         # eq (10)
@@ -340,8 +341,8 @@ class GeometryAwareTensorAttention(Module):
         self,
         h: Float['b n d'],
         t_ij: Float['b n n d'],
-        r_ij: tuple[Float['b n n _'], ...],
-        x: tuple[Float['b n d _'], ...] | None = None,
+        r_ij: Sequence[Float['b n n _'], ...],
+        x: Sequence[Float['b n d _'], ...] | None = None,
         mask: Bool['b n'] | None = None,
         radius_cutoff_softmask: Float['b n n'] | None = None
     ):
