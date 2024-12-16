@@ -34,6 +34,57 @@ def default(v, d):
 def l2norm(t):
     return F.normalize(t, dim = -1, p = 2)
 
+# node scalar feat init
+# eq (1) and (2)
+
+class NodeScalarFeatInit(Module):
+    def __init__(
+        self,
+        num_atoms,
+        dim
+    ):
+        super().__init__()
+
+        # confusingly, the embeddings for neighbors (A_nbr) is different than for itself? (A_na)
+
+        self.atom_embed = nn.Embedding(num_atoms, dim)
+        self.neighbor_atom_embed = nn.Embedding(num_atoms, dim)
+
+        self.rel_dist_mlp = Sequential(
+            Rearrange('... -> ... 1'),
+            nn.Linear(1, dim, bias = False)
+        )
+
+        self.to_node_feats = Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.LayerNorm(dim),
+            nn.SiLU(),
+            nn.Linear(dim, dim)
+        )
+
+    def forward(
+        self,
+        atom_ids: Int['b n'],
+        adj_mat: Bool['b n n'],
+        rel_dist: Float['b n n']
+    ) -> Float['b n d']:
+        seq, device = atom_ids.shape[-1], atom_ids.device
+
+        eye = torch.eye(seq, device = device, dtype = torch.bool)
+
+        adj_mat = adj_mat & ~eye # remove self from adjacency matrix
+
+        embeds = self.atom_embed(atom_ids)
+        neighbor_embeds = self.neighbor_atom_embed(atom_ids)
+
+        rel_dist_feats = self.rel_dist_mlp(rel_dist)
+
+        neighbor_feats = einsum('b i j, b i j d, b j d -> b i d', adj_mat.float(), rel_dist_feats, neighbor_embeds)
+
+        self_and_neighbor = torch.cat((embeds, neighbor_feats), dim = -1)
+
+        return self.to_node_feats(self_and_neighbor)
+
 # edge scalar feat init
 # eq (3)
 
@@ -49,7 +100,7 @@ class EdgeScalarFeatInit(Module):
 
         dim_inner = int(dim * expansion_factor)
 
-        self.rel_dist_mlp = nn.Sequential(
+        self.rel_dist_mlp = Sequential(
             Rearrange('... -> ... 1'),
             nn.Linear(dim, dim_inner, bias = False),
             nn.LayerNorm(dim_inner),
