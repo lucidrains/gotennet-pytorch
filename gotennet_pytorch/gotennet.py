@@ -288,7 +288,7 @@ class GeometryAwareTensorAttention(Module):
         # maybe eq (4) and early return
 
         if self.only_init_high_degree_feats:
-            return [einx.multiply('... i j m, ... i j d', one_r_ij, one_r_ij_scale) for one_r_ij, one_r_ij_scale in zip(r_ij, out.unbind(dim = -2))]
+            return [einx.multiply('... i j m, ... i j d -> ... i j d m', one_r_ij, one_r_ij_scale) for one_r_ij, one_r_ij_scale in zip(r_ij, out.unbind(dim = -2))]
 
         # split out all the O's (eq 7 second half)
 
