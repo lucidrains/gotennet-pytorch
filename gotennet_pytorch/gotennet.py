@@ -370,17 +370,15 @@ class GeometryAwareTensorAttention(Module):
 
         # eq (6)
 
-        # numerator - αij
+        keys = einx.multiply('... j d, ... i j s -> ... i j d s', keys, edge_keys)
 
-        sim_num = einsum('... i d, ... j d -> ... i j', queries, keys)
+        # sim
 
-        # denominator - αik (?) - why is there a k-dimension? just play along for now
+        sim = einsum('... i d, ... i j d s -> ... i j s', queries, keys)
 
-        sim_den = einsum('... i, ... k s -> ... i s', queries, edge_keys)
+        # attn
 
-        # attention
-
-        attn = einx.divide('... i j, ... i s -> ... i j s', sim_num, sim_den)
+        attn = sim.softmax(dim = -2)
 
         # aggregate values
 
