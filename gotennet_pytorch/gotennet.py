@@ -66,8 +66,10 @@ class NodeScalarFeatInit(Module):
         self,
         atom_ids: Int['b n'],
         adj_mat: Bool['b n n'],
-        rel_dist: Float['b n n']
+        rel_dist: Float['b n n'],
+        cutoff_softmask: Float['b n n'] | None = None
     ) -> Float['b n d']:
+
         seq, device = atom_ids.shape[-1], atom_ids.device
 
         eye = torch.eye(seq, device = device, dtype = torch.bool)
@@ -78,6 +80,9 @@ class NodeScalarFeatInit(Module):
         neighbor_embeds = self.neighbor_atom_embed(atom_ids)
 
         rel_dist_feats = self.rel_dist_mlp(rel_dist)
+
+        if exists(cutoff_softmask):
+            rel_dist_feats = einx.multiply('b i j d, b i j -> b i j d', rel_dist_feats, cutoff_softmask)
 
         neighbor_feats = einsum('b i j, b i j d, b j d -> b i d', adj_mat.float(), rel_dist_feats, neighbor_embeds)
 
@@ -123,7 +128,7 @@ class EdgeScalarFeatInit(Module):
 # cutoff function
 # never expounded upon in the paper. just improvise a smooth version
 
-class Cutoff(Module):
+class SoftCutoff(Module):
     def __init__(
         self,
         cutoff_dist = 5., # they have it at about 4-5 angstroms
@@ -142,7 +147,7 @@ class Cutoff(Module):
 
         modulation = shifted_and_scaled.sigmoid()
 
-        return rel_dist * (1. - modulation)
+        return 1. - modulation
 
 # equivariant feedforward
 # section 3.5
@@ -441,13 +446,19 @@ class GotenNet(Module):
         dim_head = None,
         mlp_expansion_factor = 2.,
         edge_init_mlp_expansion_factor = 4.,
+        cutoff_radius = 5.,
         ff_kwargs: dict = dict(),
+        cutoff_kwargs: dict = dict(),
         return_coors = True,
         proj_invariant_dim = None
     ):
         super().__init__()
         assert max_degree > 0
         self.max_degree = max_degree
+
+        # soft cutoff
+
+        self.soft_cutoff = SoftCutoff(cutoff_radius, **cutoff_kwargs)
 
         # node and edge feature init
 
@@ -500,9 +511,13 @@ class GotenNet(Module):
         rel_pos = einx.subtract('b i c, b j c -> b i j c', coors, coors)
         rel_dist = rel_pos.norm(dim = -1)
 
+        # soft cutoff
+
+        cutoff_softmask = self.soft_cutoff(rel_dist)
+
         # initialization
 
-        h = self.node_init(atom_ids, adj_mat, rel_dist)
+        h = self.node_init(atom_ids, adj_mat, rel_dist, cutoff_softmask = cutoff_softmask)
 
         t_ij = self.edge_init(h, rel_dist)
 
