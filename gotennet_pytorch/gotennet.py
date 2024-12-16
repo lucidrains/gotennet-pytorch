@@ -31,9 +31,6 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
-def l2norm(t):
-    return F.normalize(t, dim = -1, p = 2)
-
 # node scalar feat init
 # eq (1) and (2)
 
@@ -102,7 +99,7 @@ class EdgeScalarFeatInit(Module):
 
         self.rel_dist_mlp = Sequential(
             Rearrange('... -> ... 1'),
-            nn.Linear(dim, dim_inner, bias = False),
+            nn.Linear(1, dim_inner, bias = False),
             nn.LayerNorm(dim_inner),
             nn.SiLU(),
             nn.Linear(dim_inner, dim, bias = False)
@@ -186,14 +183,14 @@ class EquivariantFeedForward(Module):
 
             proj_one_degree = einsum('... d m, ... d e -> ... e m', one_degree, proj)
 
-            normed_invariant = l2norm(proj_one_degree)
+            normed_invariant = proj_one_degree.norm(dim = -1)
 
-            mlp_inp = torch.cat((x, normed_invariant))
+            mlp_inp = torch.cat((h, normed_invariant), dim = - 1)
             mlp_out = mlp(mlp_inp)
 
             m1, m2 = mlp_out.chunk(2, dim = -1) # named m1, m2 in equation 13, one is the residual for h, the other modulates the projected higher degree tensor for its residual
 
-            modulated_one_degree = einx.multiply('... d m, d -> ... d m', proj_one_degree, m2)
+            modulated_one_degree = einx.multiply('... d m, ... d -> ... d m', proj_one_degree, m2)
 
             # aggregate residuals
 
@@ -232,7 +229,7 @@ class HierarchicalTensorRefinement(Module):
         # the other for refining the t_ij passed down from the layer before as a residual
 
         self.residue_update = nn.Linear(dim, dim, bias = False)
-        self.edge_proj = nn.Linear(dim_edge_refinement, dim, bias = False)
+        self.edge_proj = nn.Linear(dim_edge_refinement * max_degree, dim, bias = False)
 
     def forward(
         self,
@@ -252,7 +249,12 @@ class HierarchicalTensorRefinement(Module):
 
         w_ij = cat(inner_product, dim = -1)
 
-        return self.edge_proj(w_ij) + self.residue_update(t_ij) # eq (12)
+        # eq (12)
+
+        edge_proj_out = self.edge_proj(w_ij)
+        residue_update_out = self.residue_update(t_ij)
+
+        return edge_proj_out + residue_update_out
 
 # geometry-aware tensor attention
 # section 3.3
@@ -360,8 +362,7 @@ class GeometryAwareTensorAttention(Module):
 
         post_attn_values = self.post_attn_h_values(hj)
 
-        edge_keys = self.to_edge_values(t_ij)
-
+        edge_keys = self.to_edge_keys(t_ij)
         edge_values = self.to_edge_values(t_ij)
 
         # split out attention heads
@@ -370,11 +371,11 @@ class GeometryAwareTensorAttention(Module):
 
         # eq (6)
 
-        keys = einx.multiply('... j d, ... i j s -> ... i j d s', keys, edge_keys)
+        keys = einx.multiply('... j d, ... i j s d -> ... i j s d', keys, edge_keys)
 
         # sim
 
-        sim = einsum('... i d, ... i j d s -> ... i j s', queries, keys)
+        sim = einsum('... i d, ... i j s d -> ... i j s', queries, keys)
 
         # attn
 
@@ -397,23 +398,22 @@ class GeometryAwareTensorAttention(Module):
         # maybe eq (4) and early return
 
         if self.only_init_high_degree_feats:
-            return [einx.multiply('... i j m, ... i j d -> ... i j d m', one_r_ij, one_r_ij_scale) for one_r_ij, one_r_ij_scale in zip(r_ij, out.unbind(dim = -2))]
+            return [einsum('... i j m, ... i j d -> ... i d m', one_r_ij, one_r_ij_scale) for one_r_ij, one_r_ij_scale in zip(r_ij, out.unbind(dim = -2))]
 
         # split out all the O's (eq 7 second half)
 
-        h_scales, r_ij_scales, x_scales = out.chunk(self.S, dim = -2)
+        h_scales, r_ij_scales, x_scales = out.split(self.S, dim = -2)
 
         # modulate with invariant scales and sum residuals
 
-        h_with_residual = h + reduce(h_scales, '... j d -> ... d', 'sum')
-
+        h_with_residual = h + reduce(h_scales, 'b i j 1 d -> b i d', 'sum')
         x_with_residual = []
 
-        for one_degree, one_r_ij, one_degree_scale, one_r_ij_scale in zip(x, r_ij, x_scales, r_ij_scales):
+        for one_degree, one_r_ij, one_degree_scale, one_r_ij_scale in zip(x, r_ij, x_scales.unbind(dim = -2), r_ij_scales.unbind(dim = -2)):
 
             x_with_residual.append((
-                einx.multiply('... j d m, ... i j d -> ... i d m', one_degree, one_degree_scale) +
-                einx.multiply('... i j m, ... i j d -> ... i d m', one_r_ij, one_r_ij_scale)
+                einsum('b j d m, b i j d -> b i d m', one_degree, one_degree_scale) +
+                einsum('b i j m, b i j d -> b i d m', one_r_ij, one_r_ij_scale)
             ))
 
         return h_with_residual, x_with_residual
@@ -487,8 +487,8 @@ class GotenNet(Module):
         adj_mat: Bool['b n n']
     ):
 
-        rel_pos = einx.subtract('b i c, b j c -> b i j c')
-        rel_dist = rel_dir.norm(dim = -1)
+        rel_pos = einx.subtract('b i c, b j c -> b i j c', coors, coors)
+        rel_dist = rel_pos.norm(dim = -1)
 
         # initialization
 
@@ -526,7 +526,7 @@ class GotenNet(Module):
   
         # maybe transform invariant h
 
-        if exists(self.proj_invariant_dim):
+        if exists(self.proj_invariant):
             h = self.proj_invariant(h)
 
         # return h and x if `return_coors = False`

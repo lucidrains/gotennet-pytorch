@@ -39,6 +39,28 @@ def rot(alpha, beta, gamma):
 
 from gotennet_pytorch.gotennet import GotenNet
 
+def test_invariant():
+
+    model = GotenNet(
+        dim = 256,
+        max_degree = 2,
+        depth = 1,
+        heads = 2,
+        dim_head = 32,
+        dim_edge_refinement = 256
+    )
+
+    random_rotation = rot(*torch.randn(3))
+
+    atom_ids = torch.randint(0, 14, (1, 12))
+    coors = torch.randn(1, 12, 3)
+    adj_mat = torch.randint(0, 2, (1, 12, 12)).bool()
+
+    inv1, _ = model(atom_ids, adj_mat = adj_mat, coors = coors)
+    inv2, _ = model(atom_ids, adj_mat = adj_mat, coors = coors @ random_rotation)
+
+    assert torch.allclose(inv1, inv2, atol = 1e-4)
+
 def test_equivariant():
 
     model = GotenNet(
