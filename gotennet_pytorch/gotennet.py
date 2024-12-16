@@ -120,6 +120,30 @@ class EdgeScalarFeatInit(Module):
 
         return outer_sum_feats + rel_dist_feats
 
+# cutoff function
+# never expounded upon in the paper. just improvise a smooth version
+
+class Cutoff(Module):
+    def __init__(
+        self,
+        cutoff_dist = 5., # they have it at about 4-5 angstroms
+        sharpness = 10.   # multiply value before sigmoid
+    ):
+        super().__init__()
+        self.cutoff_dist = cutoff_dist
+        self.sharpness = sharpness
+
+    def forward(
+        self,
+        rel_dist: Float['b n n']
+    ) -> Float['b n n']:
+
+        shifted_and_scaled = (rel_dist - self.cutoff_dist) * self.sharpness
+
+        modulation = shifted_and_scaled.sigmoid()
+
+        return rel_dist * (1. - modulation)
+
 # equivariant feedforward
 # section 3.5
 
