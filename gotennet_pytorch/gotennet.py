@@ -11,6 +11,18 @@ from einops.layers.torch import Rearrange
 
 from e3nn.o3 import spherical_harmonics
 
+from gotennet_pytorch.tensor_typing import Float, Int, Bool
+
+# ein notation
+
+# b - batch
+# h - heads
+# n - sequence
+# i, j - source and target sequence
+# d - feature
+# m - order of each degree
+# l - degree
+
 # helper functions
 
 def exists(v):
@@ -50,8 +62,8 @@ class EquivariantFeedForward(Module):
 
     def forward(
         self,
-        h: Tensor,
-        x: tuple[Tensor, ...]
+        h: Float['b n d'],
+        x: tuple[Float['b n d _'], ...]
     ):
         assert len(x) == self.max_degree
 
@@ -114,8 +126,8 @@ class HierarchicalTensorRefinement(Module):
 
     def forward(
         self,
-        t_ij: Tensor,
-        x: tuple[Tensor, ...],
+        t_ij: Float['b n n d'],
+        x: tuple[Float['b n d _'], ...],
     ):
         # eq (10)
 
@@ -211,10 +223,10 @@ class GeometryAwareTensorAttention(Module):
 
     def forward(
         self,
-        h: Tensor,
-        t_ij: Tensor,
-        r_ij: tuple[Tensor, ...],
-        x: tuple[Tensor, ...] | None = None,
+        h: Float['b n d'],
+        t_ij: Float['b n n d'],
+        r_ij: tuple[Float['b n n _'], ...],
+        x: tuple[Float['b n d _'], ...] | None = None,
     ):
         # validation
 
@@ -326,9 +338,9 @@ class GotenNet(Module):
 
     def forward(
         self,
-        atom_ids,
-        coors,
-        mask = None
+        atom_ids: Int['b n'],
+        coors: Float['b n 3'],
+        mask: Bool['b n'] | None = None
     ):
 
         rel_pos = einx.subtract('b i c, b j c -> b i j c')
