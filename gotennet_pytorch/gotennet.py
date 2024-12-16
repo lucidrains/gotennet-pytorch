@@ -43,9 +43,6 @@ class NodeScalarFeatInit(Module):
         dim
     ):
         super().__init__()
-
-        # confusingly, the embeddings for neighbors (A_nbr) is different than for itself? (A_na)
-
         self.atom_embed = nn.Embedding(num_atoms, dim)
         self.neighbor_atom_embed = nn.Embedding(num_atoms, dim)
 
@@ -99,8 +96,6 @@ class EdgeScalarFeatInit(Module):
         expansion_factor = 4.,
     ):
         super().__init__()
-
-        # todo - figure out cutoff later
 
         dim_inner = int(dim * expansion_factor)
 
