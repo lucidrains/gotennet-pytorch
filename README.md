@@ -6,6 +6,35 @@ Implementation of <a href="https://openreview.net/forum?id=5wxCQDtbMo">GotenNet<
 
 I know a lot of researchers have moved on from geometric learning after Alphafold3. However, I just cannot help but <a href="https://arxiv.org/abs/2410.11443">wonder</a>. Hedging my bets
 
+## Install
+
+```bash
+$ pip install gotennet-pytorch
+```
+
+## Usage
+
+```python
+import torch
+from gotennet_pytorch import GotenNet
+
+model = GotenNet(
+    dim = 256,
+    max_degree = 2,
+    depth = 1,
+    heads = 2,
+    dim_head = 32,
+    dim_edge_refinement = 256,
+    return_coors = False
+)
+
+atom_ids = torch.randint(0, 14, (1, 12))
+coors = torch.randn(1, 12, 3)
+adj_mat = torch.randint(0, 2, (1, 12, 12)).bool()
+
+invariant, coors_out = model(atom_ids, adj_mat = adj_mat, coors = coors)
+```
+
 ## Citations
 
 ```bibtex
