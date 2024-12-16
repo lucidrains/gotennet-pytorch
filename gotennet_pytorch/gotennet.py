@@ -141,9 +141,12 @@ class GeometryAwareTensorAttention(Module):
         max_degree,
         dim_head = None,
         heads = 8,
-        mlp_expansion_factor = 2.
+        mlp_expansion_factor = 2.,
+        only_init_high_degree_feats = False # if set to True, only returns high degree steerable features eq (4) in section 3.2
     ):
         super().__init__()
+        self.only_init_high_degree_feats = only_init_high_degree_feats
+
         assert max_degree > 0
         self.max_degree = max_degree
 
@@ -168,7 +171,7 @@ class GeometryAwareTensorAttention(Module):
 
         # S contains two parts of L_max (one to modulate each degree of r_ij, another to modulate each X_j, then one final to modulate h). incidentally, this overlaps with eq. (m = 2 * L + 1), causing much confusion, cleared up in openreview
 
-        self.S = (1, max_degree, max_degree)
+        self.S = (1, max_degree, max_degree) if not only_init_high_degree_feats else (max_degree,)
         S = sum(self.S)
 
         self.to_values = Sequential(
@@ -209,11 +212,17 @@ class GeometryAwareTensorAttention(Module):
     def forward(
         self,
         h: Tensor,
-        x: tuple[Tensor, ...],
         t_ij: Tensor,
-        r_ij: tuple[Tensor, ...]
+        r_ij: tuple[Tensor, ...],
+        x: tuple[Tensor, ...] | None = None,
     ):
-        assert len(x) == self.max_degree
+        # validation
+
+        assert exists(x) ^ self.only_init_high_degree_feats
+
+        if not self.only_init_high_degree_feats:
+            assert len(x) == self.max_degree
+
         assert len(r_ij) == self.max_degree
 
         # eq (5)
@@ -263,6 +272,11 @@ class GeometryAwareTensorAttention(Module):
         out = self.merge_heads(sea_ij)
 
         out = self.combine_heads(out)
+
+        # maybe eq (4) and early return
+
+        if self.only_init_high_degree_feats:
+            return [einx.multiply('... i j m, ... i j d', one_r_ij, one_r_ij_scale) for one_r_ij, one_r_ij_scale in zip(r_ij, out.unbind(dim = -2))]
 
         # split out all the O's (eq 7 second half)
 
