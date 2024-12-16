@@ -34,6 +34,41 @@ def default(v, d):
 def l2norm(t):
     return F.normalize(t, dim = -1, p = 2)
 
+# edge scalar feat init
+# eq (3)
+
+class EdgeScalarFeatInit(Module):
+    def __init__(
+        self,
+        dim,
+        expansion_factor = 4.,
+    ):
+        super().__init__()
+
+        # todo - figure out cutoff later
+
+        dim_inner = int(dim * expansion_factor)
+
+        self.rel_dist_mlp = nn.Sequential(
+            Rearrange('... -> ... 1'),
+            nn.Linear(dim, dim_inner, bias = False),
+            nn.LayerNorm(dim_inner),
+            nn.SiLU(),
+            nn.Linear(dim_inner, dim, bias = False)
+        )
+
+    def forward(
+        self,
+        h: Float['b n d'],
+        rel_dist: Float['b n n']
+    ) -> Float['b n n d']:
+
+        outer_sum_feats = einx.add('b i d, b j d -> b i j d', h, h)
+
+        rel_dist_feats = self.rel_dist_mlp(rel_dist)
+
+        return outer_sum_feats + rel_dist_feats
+
 # equivariant feedforward
 # section 3.5
 
