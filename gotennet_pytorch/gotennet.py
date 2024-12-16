@@ -214,7 +214,8 @@ class HierarchicalTensorRefinement(Module):
         self,
         t_ij: Float['b n n d'],
         x: tuple[Float['b n d _'], ...],
-    ):
+    ) -> Float['b n n d']:
+
         # eq (10)
 
         queries = [einsum('... d m, ... d e -> ... e m', one_degree, self.to_queries) for one_degree in x]
@@ -404,14 +405,34 @@ class GotenNet(Module):
         depth,
         max_degree,
         dim_edge_refinement,
+        num_atoms = 14,
         heads = 8,
         dim_head = None,
         mlp_expansion_factor = 2.,
-        ff_kwargs: dict = dict()
+        edge_init_mlp_expansion_factor = 4.,
+        ff_kwargs: dict = dict(),
+        return_coors = True,
+        proj_invariant_dim = None
     ):
         super().__init__()
         assert max_degree > 0
         self.max_degree = max_degree
+
+        # node and edge feature init
+
+        self.node_init = NodeScalarFeatInit(num_atoms, dim)
+        self.edge_init = EdgeScalarFeatInit(dim, expansion_factor = edge_init_mlp_expansion_factor)
+
+        self.high_degree_init = GeometryAwareTensorAttention(
+            dim,
+            max_degree = max_degree,
+            dim_head = dim_head,
+            heads = heads,
+            mlp_expansion_factor = mlp_expansion_factor,
+            only_init_high_degree_feats = True
+        )
+
+        # layers, thus deep learning
 
         self.layers = ModuleList([])
 
@@ -422,15 +443,36 @@ class GotenNet(Module):
                 EquivariantFeedForward(dim, max_degree, mlp_expansion_factor),
             ]))
 
+        # maybe project invariant
+
+        self.proj_invariant = None
+
+        if exists(proj_invariant_dim):
+            self.proj_invariant = nn.Linear(dim, proj_invariant_dim, bias = False)
+
+        # maybe project to coordinates
+
+        self.proj_to_coors = Sequential(
+            Rearrange('... d m -> ... m d'),
+            nn.Linear(dim, 1, bias = False),
+            Rearrange('... 1 -> ...')
+        ) if return_coors else None
+
     def forward(
         self,
         atom_ids: Int['b n'],
         coors: Float['b n 3'],
-        mask: Bool['b n'] | None = None
+        adj_mat: Bool['b n n']
     ):
 
         rel_pos = einx.subtract('b i c, b j c -> b i j c')
         rel_dist = rel_dir.norm(dim = -1)
+
+        # initialization
+
+        h = self.node_init(atom_ids, adj_mat, rel_dist)
+
+        t_ij = self.edge_init(h, rel_dist)
 
         # constitute r_ij from section 3.1
 
@@ -440,9 +482,38 @@ class GotenNet(Module):
             one_degree_r_ij = spherical_harmonics(degree, rel_pos, normalize = True, normalization = 'norm')
             r_ij.append(one_degree_r_ij)
 
+        # init the high degrees
+
+        x = self.high_degree_init(h, t_ij, r_ij)
+
         # go through the layers
 
         for htr, attn, ff in self.layers:
-            pass
+
+            # hierarchical tensor refinement
+
+            t_ij = htr(t_ij, x)
+
+            # followed by attention, but of course
+
+            h, x = attn(h, t_ij, r_ij, x)
+
+            # feedforward
+
+            h, x = ff(h, x)
   
-        return atom_ids, coors
+        # maybe transform invariant h
+
+        if exists(self.proj_invariant_dim):
+            h = self.proj_invariant(h)
+
+        # return h and x if `return_coors = False`
+
+        if not exists(self.proj_to_coors):
+            return h, x
+
+        degree1, *_ = x
+
+        coors_out = self.proj_to_coors(degree1)
+
+        return h, coors_out
