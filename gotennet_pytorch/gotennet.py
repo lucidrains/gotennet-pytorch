@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
 from torch import nn, cat, Tensor, einsum
 from torch.nn import Linear, Sequential, Module, ModuleList, ParameterList
 
