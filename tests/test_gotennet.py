@@ -56,9 +56,10 @@ def test_invariant():
     atom_ids = torch.randint(0, 14, (1, 12))
     coors = torch.randn(1, 12, 3)
     adj_mat = torch.randint(0, 2, (1, 12, 12)).bool()
+    mask = torch.randint(0, 2, (1, 12)).bool()
 
-    inv1, _ = model(atom_ids, adj_mat = adj_mat, coors = coors)
-    inv2, _ = model(atom_ids, adj_mat = adj_mat, coors = coors @ random_rotation)
+    inv1, _ = model(atom_ids, adj_mat = adj_mat, coors = coors, mask = mask)
+    inv2, _ = model(atom_ids, adj_mat = adj_mat, coors = coors @ random_rotation, mask = mask)
 
     assert torch.allclose(inv1, inv2, atol = 1e-4)
 
@@ -79,8 +80,9 @@ def test_equivariant():
     atom_ids = torch.randint(0, 14, (1, 12))
     coors = torch.randn(1, 12, 3)
     adj_mat = torch.randint(0, 2, (1, 12, 12)).bool()
+    mask = torch.randint(0, 2, (1, 12)).bool()
 
-    _, coors1 = model(atom_ids, adj_mat = adj_mat, coors = coors)
-    _,  coors2 = model(atom_ids, adj_mat = adj_mat, coors = coors @ random_rotation)
+    _, coors1 = model(atom_ids, adj_mat = adj_mat, coors = coors, mask = mask)
+    _,  coors2 = model(atom_ids, adj_mat = adj_mat, coors = coors @ random_rotation, mask = mask)
 
     assert torch.allclose(coors1 @ random_rotation, coors2, atol = 1e-3)

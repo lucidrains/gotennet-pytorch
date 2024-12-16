@@ -31,6 +31,9 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+def max_neg_value(t):
+    return -torch.finfo(t.dtype).max
+
 # node scalar feat init
 # eq (1) and (2)
 
@@ -340,6 +343,7 @@ class GeometryAwareTensorAttention(Module):
         t_ij: Float['b n n d'],
         r_ij: tuple[Float['b n n _'], ...],
         x: tuple[Float['b n d _'], ...] | None = None,
+        mask: Bool['b n'] | None = None
     ):
         # validation
 
@@ -376,6 +380,11 @@ class GeometryAwareTensorAttention(Module):
         # sim
 
         sim = einsum('... i d, ... i j s d -> ... i j s', queries, keys)
+
+        # masking
+
+        if exists(mask):
+            sim = einx.where('b j, b h i j s, -> b h i j s', mask, sim, max_neg_value(sim))
 
         # attn
 
@@ -484,7 +493,8 @@ class GotenNet(Module):
         self,
         atom_ids: Int['b n'],
         coors: Float['b n 3'],
-        adj_mat: Bool['b n n']
+        adj_mat: Bool['b n n'],
+        mask: Bool['b n'] | None = None
     ):
 
         rel_pos = einx.subtract('b i c, b j c -> b i j c', coors, coors)
@@ -506,7 +516,7 @@ class GotenNet(Module):
 
         # init the high degrees
 
-        x = self.high_degree_init(h, t_ij, r_ij)
+        x = self.high_degree_init(h, t_ij, r_ij, mask = mask)
 
         # go through the layers
 
@@ -518,7 +528,7 @@ class GotenNet(Module):
 
             # followed by attention, but of course
 
-            h, x = attn(h, t_ij, r_ij, x)
+            h, x = attn(h, t_ij, r_ij, x, mask = mask)
 
             # feedforward
 
