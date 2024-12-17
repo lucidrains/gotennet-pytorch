@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextlib import contextmanager
 from collections.abc import Sequence
 
 import torch
@@ -37,6 +38,13 @@ def max_neg_value(t):
 def mask_from_lens(lens, total_len):
     seq = torch.arange(total_len, device = lens.device)
     return einx.less('n, b -> b n', seq, lens)
+
+@contextmanager
+def torch_default_dtype(dtype):
+    prev_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    yield
+    torch.set_default_dtype(prev_dtype)
 
 # radial basis function
 
@@ -98,6 +106,7 @@ class NodeScalarFeatInit(Module):
         radius_cutoff_softmask: Float['b n n'] | None = None
     ) -> Float['b n d']:
 
+        dtype = rel_dist.dtype
         seq, device = atom_ids.shape[-1], atom_ids.device
 
         eye = torch.eye(seq, device = device, dtype = torch.bool)
@@ -112,7 +121,7 @@ class NodeScalarFeatInit(Module):
         if exists(radius_cutoff_softmask):
             rel_dist_feats = einx.multiply('b i j d, b i j -> b i j d', rel_dist_feats, radius_cutoff_softmask)
 
-        neighbor_feats = einsum('b i j, b i j d, b j d -> b i d', adj_mat.float(), rel_dist_feats, neighbor_embeds)
+        neighbor_feats = einsum('b i j, b i j d, b j d -> b i d', adj_mat.type(dtype), rel_dist_feats, neighbor_embeds)
 
         self_and_neighbor = torch.cat((embeds, neighbor_feats), dim = -1)
 
