@@ -34,6 +34,10 @@ def default(v, d):
 def max_neg_value(t):
     return -torch.finfo(t.dtype).max
 
+def mask_from_lens(lens, total_len):
+    seq = torch.arange(total_len, device = lens.device)
+    return einx.less('n, b -> b n', seq, lens)
+
 # radial basis function
 
 class Radial(Module):
@@ -541,8 +545,15 @@ class GotenNet(Module):
         atom_ids: Int['b n'],
         coors: Float['b n 3'],
         adj_mat: Bool['b n n'],
+        lens: Int['b'] | None = None,
         mask: Bool['b n'] | None = None
     ):
+        batch, seq_len = atom_ids.shape
+
+        assert not (exists(lens) and exists(mask)), '`lens` and `masks` cannot be both passed in'
+
+        if exists(lens):
+            mask = mask_from_lens(lens, seq_len)
 
         rel_pos = einx.subtract('b i c, b j c -> b i j c', coors, coors)
         rel_dist = rel_pos.norm(dim = -1)
