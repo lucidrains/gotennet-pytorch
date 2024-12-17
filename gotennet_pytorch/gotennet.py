@@ -62,10 +62,10 @@ class Radial(Module):
             Rearrange('... -> ... 1'),
             Linear(1, hidden),
             nn.SiLU(),
-            LayerNorm(hidden),
+            LayerNorm(hidden, bias = False),
             Linear(hidden, hidden),
             nn.SiLU(),
-            LayerNorm(hidden),
+            LayerNorm(hidden, bias = False),
             Linear(hidden, dim)
         )
 
@@ -93,7 +93,7 @@ class NodeScalarFeatInit(Module):
 
         self.to_node_feats = Sequential(
             Linear(dim * 2, dim),
-            LayerNorm(dim),
+            LayerNorm(dim, bias = False),
             nn.SiLU(),
             Linear(dim, dim)
         )
@@ -147,7 +147,7 @@ class EdgeScalarFeatInit(Module):
         self.rel_dist_mlp = Sequential(
             Rearrange('... -> ... 1'),
             nn.Linear(1, dim_inner, bias = False),
-            LayerNorm(dim_inner),
+            LayerNorm(dim_inner, bias = False),
             nn.SiLU(),
             nn.Linear(dim_inner, dim, bias = False)
         )
@@ -196,7 +196,8 @@ class EquivariantFeedForward(Module):
         self,
         dim,
         max_degree,
-        mlp_expansion_factor = 2.
+        mlp_expansion_factor = 2.,
+        layernorm_input = False # no mention of this in the paper, but think there should be one based on my own intuition
     ):
         """
         following eq 13
@@ -210,7 +211,12 @@ class EquivariantFeedForward(Module):
         self.projs = ParameterList([nn.Parameter(torch.randn(dim, dim)) for _ in range(max_degree)])
 
         self.mlps = ModuleList([
-            Sequential(Linear(dim * 2, mlp_dim), nn.SiLU(), Linear(mlp_dim, dim * 2))
+            Sequential(
+                LayerNorm(dim * 2, bias = False) if layernorm_input else nn.Identity(),
+                Linear(dim * 2, mlp_dim),
+                nn.SiLU(),
+                Linear(mlp_dim, dim * 2)
+            )
             for _ in range(max_degree)
         ])
 

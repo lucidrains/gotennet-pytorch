@@ -48,7 +48,10 @@ def test_invariant():
         heads = 2,
         dim_head = 32,
         dim_edge_refinement = 256,
-        return_coors = False
+        return_coors = False,
+        ff_kwargs = dict(
+            layernorm_input = True
+        )
     )
 
     random_rotation = rot(*torch.randn(3))
@@ -73,7 +76,10 @@ def test_equivariant():
         heads = 2,
         dim_head = 32,
         dim_edge_refinement = 256,
-        return_coors = True
+        return_coors = True,
+        ff_kwargs = dict(
+            layernorm_input = True
+        )
     )
 
     random_rotation = rot(*torch.randn(3))
