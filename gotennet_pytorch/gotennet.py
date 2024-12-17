@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 import torch
 from torch import nn, cat, Tensor, einsum
-from torch.nn import Linear, Sequential, Module, ModuleList, ParameterList
+from torch.nn import LayerNorm, Linear, Sequential, Module, ModuleList, ParameterList
 
 import einx
 from einops import reduce
@@ -34,6 +34,32 @@ def default(v, d):
 def max_neg_value(t):
     return -torch.finfo(t.dtype).max
 
+# radial basis function
+
+class Radial(Module):
+    def __init__(
+        self,
+        dim,
+        radial_hidden_dim = 64
+    ):
+        super().__init__()
+
+        hidden = radial_hidden_dim
+
+        self.rp = Sequential(
+            Rearrange('... -> ... 1'),
+            Linear(1, hidden),
+            nn.SiLU(),
+            LayerNorm(hidden),
+            Linear(hidden, hidden),
+            nn.SiLU(),
+            LayerNorm(hidden),
+            Linear(hidden, dim)
+        )
+
+    def forward(self, x):
+        return self.rp(x)
+
 # node scalar feat init
 # eq (1) and (2)
 
@@ -41,22 +67,23 @@ class NodeScalarFeatInit(Module):
     def __init__(
         self,
         num_atoms,
-        dim
+        dim,
+        radial_hidden_dim = 64
     ):
         super().__init__()
         self.atom_embed = nn.Embedding(num_atoms, dim)
         self.neighbor_atom_embed = nn.Embedding(num_atoms, dim)
 
-        self.rel_dist_mlp = Sequential(
-            Rearrange('... -> ... 1'),
-            nn.Linear(1, dim, bias = False)
+        self.rel_dist_mlp = Radial(
+            dim = dim,
+            radial_hidden_dim = radial_hidden_dim
         )
 
         self.to_node_feats = Sequential(
-            nn.Linear(dim * 2, dim),
-            nn.LayerNorm(dim),
+            Linear(dim * 2, dim),
+            LayerNorm(dim),
             nn.SiLU(),
-            nn.Linear(dim, dim)
+            Linear(dim, dim)
         )
 
     def forward(
@@ -103,7 +130,7 @@ class EdgeScalarFeatInit(Module):
         self.rel_dist_mlp = Sequential(
             Rearrange('... -> ... 1'),
             nn.Linear(1, dim_inner, bias = False),
-            nn.LayerNorm(dim_inner),
+            LayerNorm(dim_inner),
             nn.SiLU(),
             nn.Linear(dim_inner, dim, bias = False)
         )
@@ -289,8 +316,8 @@ class GeometryAwareTensorAttention(Module):
 
         # eq (5) - layernorms are present in the diagram in figure 2. but not mentioned in the equations..
 
-        self.to_hi = nn.LayerNorm(dim, bias = False)
-        self.to_hj = nn.LayerNorm(dim, bias = False)
+        self.to_hi = LayerNorm(dim, bias = False)
+        self.to_hj = LayerNorm(dim, bias = False)
 
         self.to_queries = Linear(dim, dim_inner, bias = False)
         self.to_keys = Linear(dim, dim_inner, bias = False)
@@ -499,13 +526,13 @@ class GotenNet(Module):
         self.proj_invariant = None
 
         if exists(proj_invariant_dim):
-            self.proj_invariant = nn.Linear(dim, proj_invariant_dim, bias = False)
+            self.proj_invariant = Linear(dim, proj_invariant_dim, bias = False)
 
         # maybe project to coordinates
 
         self.proj_to_coors = Sequential(
             Rearrange('... d m -> ... m d'),
-            nn.Linear(dim, 1, bias = False),
+            Linear(dim, 1, bias = False),
             Rearrange('... 1 -> ...')
         ) if return_coors else None
 
