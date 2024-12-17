@@ -93,3 +93,29 @@ def test_equivariant():
     _,  coors2 = model(atom_ids, adj_mat = adj_mat, coors = coors @ random_rotation, mask = mask)
 
     assert torch.allclose(coors1 @ random_rotation, coors2, atol = 1e-5)
+
+@torch_default_dtype(torch.float64)
+def test_equivariant_with_atom_feats():
+
+    model = GotenNet(
+        dim = 256,
+        max_degree = 2,
+        depth = 1,
+        heads = 2,
+        dim_head = 32,
+        dim_edge_refinement = 256,
+        accept_embed = True,
+        return_coors = True
+    )
+
+    random_rotation = rot(*torch.randn(3))
+
+    atom_feats = torch.randn((1, 12, 256))
+    coors = torch.randn(1, 12, 3)
+    adj_mat = torch.randint(0, 2, (1, 12, 12)).bool()
+    mask = torch.randint(0, 2, (1, 12)).bool()
+
+    _, coors1 = model(atom_feats, adj_mat = adj_mat, coors = coors, mask = mask)
+    _,  coors2 = model(atom_feats, adj_mat = adj_mat, coors = coors @ random_rotation, mask = mask)
+
+    assert torch.allclose(coors1 @ random_rotation, coors2, atol = 1e-5)

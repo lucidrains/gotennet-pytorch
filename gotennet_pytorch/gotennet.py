@@ -80,11 +80,12 @@ class NodeScalarFeatInit(Module):
         self,
         num_atoms,
         dim,
+        accept_embed = False,
         radial_hidden_dim = 64
     ):
         super().__init__()
-        self.atom_embed = nn.Embedding(num_atoms, dim)
-        self.neighbor_atom_embed = nn.Embedding(num_atoms, dim)
+        self.atom_embed = nn.Embedding(num_atoms, dim) if not accept_embed else nn.Linear(dim, dim)
+        self.neighbor_atom_embed = nn.Embedding(num_atoms, dim) if not accept_embed else nn.Linear(dim, dim)
 
         self.rel_dist_mlp = Radial(
             dim = dim,
@@ -100,14 +101,14 @@ class NodeScalarFeatInit(Module):
 
     def forward(
         self,
-        atom_ids: Int['b n'],
+        atoms: Int['b n'] | Float['b n d'],
         rel_dist: Float['b n n'],
         adj_mat: Bool['b n n'] | None = None,
         radius_cutoff_softmask: Float['b n n'] | None = None
     ) -> Float['b n d']:
 
         dtype = rel_dist.dtype
-        batch, seq, device = *atom_ids.shape, atom_ids.device
+        batch, seq, device = *atoms.shape[:2], atoms.device
 
         eye = torch.eye(seq, device = device, dtype = torch.bool)
 
@@ -116,11 +117,11 @@ class NodeScalarFeatInit(Module):
         else:
             adj_mat = torch.ones((batch, seq, seq), device = device, dtype = dtype)
 
-        embeds = self.atom_embed(atom_ids)
+        embeds = self.atom_embed(atoms)
 
         rel_dist_feats = self.rel_dist_mlp(rel_dist)
 
-        neighbor_embeds = self.neighbor_atom_embed(atom_ids)
+        neighbor_embeds = self.neighbor_atom_embed(atoms)
 
         if exists(radius_cutoff_softmask):
             rel_dist_feats = einx.multiply('b i j d, b i j -> b i j d', rel_dist_feats, radius_cutoff_softmask)
@@ -498,6 +499,7 @@ class GotenNet(Module):
         depth,
         max_degree,
         dim_edge_refinement = None,
+        accept_embed = False,
         num_atoms = 14,
         heads = 8,
         dim_head = None,
@@ -510,6 +512,8 @@ class GotenNet(Module):
         proj_invariant_dim = None
     ):
         super().__init__()
+        self.accept_embed = accept_embed
+
         assert max_degree > 0
         self.max_degree = max_degree
 
@@ -521,7 +525,7 @@ class GotenNet(Module):
 
         # node and edge feature init
 
-        self.node_init = NodeScalarFeatInit(num_atoms, dim)
+        self.node_init = NodeScalarFeatInit(num_atoms, dim, accept_embed = accept_embed)
         self.edge_init = EdgeScalarFeatInit(dim, expansion_factor = edge_init_mlp_expansion_factor)
 
         self.high_degree_init = GeometryAwareTensorAttention(
@@ -561,13 +565,15 @@ class GotenNet(Module):
 
     def forward(
         self,
-        atom_ids: Int['b n'],
+        atoms: Int['b n'] | Float['b n d'],
         coors: Float['b n 3'],
         adj_mat: Bool['b n n'] | None = None,
         lens: Int['b'] | None = None,
         mask: Bool['b n'] | None = None
     ):
-        batch, seq_len = atom_ids.shape
+        assert (atoms.dtype in (torch.int, torch.long)) ^ self.accept_embed
+
+        batch, seq_len = atoms.shape[:2]
 
         assert not (exists(lens) and exists(mask)), '`lens` and `masks` cannot be both passed in'
 
@@ -583,7 +589,7 @@ class GotenNet(Module):
 
         # initialization
 
-        h = self.node_init(atom_ids, rel_dist, adj_mat, radius_cutoff_softmask = radius_cutoff_softmask)
+        h = self.node_init(atoms, rel_dist, adj_mat, radius_cutoff_softmask = radius_cutoff_softmask)
 
         t_ij = self.edge_init(h, rel_dist)
 
