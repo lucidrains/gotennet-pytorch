@@ -282,7 +282,7 @@ class GeometryAwareTensorAttention(Module):
 
         # for some reason, there is no mention of attention heads, will just improvise
 
-        dim_inner = dim * dim_head
+        dim_inner = heads * dim_head
 
         self.split_heads = Rearrange('b ... (h d) -> b h ... d', h = heads)
         self.merge_heads = Rearrange('b h ... d -> b ... (h d)')
@@ -447,7 +447,7 @@ class GotenNet(Module):
         dim,
         depth,
         max_degree,
-        dim_edge_refinement,
+        dim_edge_refinement = None,
         num_atoms = 14,
         heads = 8,
         dim_head = None,
@@ -462,6 +462,8 @@ class GotenNet(Module):
         super().__init__()
         assert max_degree > 0
         self.max_degree = max_degree
+
+        dim_edge_refinement = default(dim_edge_refinement, dim)
 
         # soft cutoff
 
