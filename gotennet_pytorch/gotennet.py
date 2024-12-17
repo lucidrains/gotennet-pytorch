@@ -101,22 +101,26 @@ class NodeScalarFeatInit(Module):
     def forward(
         self,
         atom_ids: Int['b n'],
-        adj_mat: Bool['b n n'],
         rel_dist: Float['b n n'],
+        adj_mat: Bool['b n n'] | None = None,
         radius_cutoff_softmask: Float['b n n'] | None = None
     ) -> Float['b n d']:
 
         dtype = rel_dist.dtype
-        seq, device = atom_ids.shape[-1], atom_ids.device
+        batch, seq, device = *atom_ids.shape, atom_ids.device
 
         eye = torch.eye(seq, device = device, dtype = torch.bool)
 
-        adj_mat = adj_mat & ~eye # remove self from adjacency matrix
+        if exists(adj_mat):
+            adj_mat = adj_mat & ~eye # remove self from adjacency matrix
+        else:
+            adj_mat = torch.ones((batch, seq, seq), device = device, dtype = dtype)
 
         embeds = self.atom_embed(atom_ids)
-        neighbor_embeds = self.neighbor_atom_embed(atom_ids)
 
         rel_dist_feats = self.rel_dist_mlp(rel_dist)
+
+        neighbor_embeds = self.neighbor_atom_embed(atom_ids)
 
         if exists(radius_cutoff_softmask):
             rel_dist_feats = einx.multiply('b i j d, b i j -> b i j d', rel_dist_feats, radius_cutoff_softmask)
@@ -553,7 +557,7 @@ class GotenNet(Module):
         self,
         atom_ids: Int['b n'],
         coors: Float['b n 3'],
-        adj_mat: Bool['b n n'],
+        adj_mat: Bool['b n n'] | None = None,
         lens: Int['b'] | None = None,
         mask: Bool['b n'] | None = None
     ):
@@ -573,7 +577,7 @@ class GotenNet(Module):
 
         # initialization
 
-        h = self.node_init(atom_ids, adj_mat, rel_dist, radius_cutoff_softmask = radius_cutoff_softmask)
+        h = self.node_init(atom_ids, rel_dist, adj_mat, radius_cutoff_softmask = radius_cutoff_softmask)
 
         t_ij = self.edge_init(h, rel_dist)
 
