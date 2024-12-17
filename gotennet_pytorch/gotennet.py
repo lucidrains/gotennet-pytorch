@@ -104,6 +104,7 @@ class NodeScalarFeatInit(Module):
         atoms: Int['b n'] | Float['b n d'],
         rel_dist: Float['b n n'],
         adj_mat: Bool['b n n'] | None = None,
+        mask: Bool['b n'] | None = None,
         radius_cutoff_softmask: Float['b n n'] | None = None
     ) -> Float['b n d']:
 
@@ -120,6 +121,9 @@ class NodeScalarFeatInit(Module):
         embeds = self.atom_embed(atoms)
 
         rel_dist_feats = self.rel_dist_mlp(rel_dist)
+
+        if exists(mask):
+            rel_dist_feats = einx.where('b j, b i j d, -> b i j d', mask, rel_dist_feats, 0.)
 
         neighbor_embeds = self.neighbor_atom_embed(atoms)
 
@@ -589,7 +593,7 @@ class GotenNet(Module):
 
         # initialization
 
-        h = self.node_init(atoms, rel_dist, adj_mat, radius_cutoff_softmask = radius_cutoff_softmask)
+        h = self.node_init(atoms, rel_dist, adj_mat, mask = mask, radius_cutoff_softmask = radius_cutoff_softmask)
 
         t_ij = self.edge_init(h, rel_dist)
 
