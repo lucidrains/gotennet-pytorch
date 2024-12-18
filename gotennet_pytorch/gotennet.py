@@ -52,6 +52,20 @@ def torch_default_dtype(dtype):
     yield
     torch.set_default_dtype(prev_dtype)
 
+# higher degree layernorm
+
+class HighDegreeNorm(Module):
+    def __init__(self, dim, eps = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.scale = dim ** 0.5
+        self.gamma = nn.Parameter(torch.ones(dim, 1))
+
+    def forward(self, x):
+        norms = x.norm(dim = -1, keepdim = True)
+        den = norms.norm(dim = -2, keepdim = True) * self.scale
+        return x / den.clamp(min = self.eps) * self.gamma
+
 # radial basis function
 
 class Radial(Module):
@@ -578,7 +592,7 @@ class GotenNet(Module):
         if final_norm:
             self.h_final_norm = nn.LayerNorm(dim)
 
-            self.x_final_norms = ModuleList([Sequential(Rearrange('... d m -> ... m d'), LayerNorm(dim), Rearrange('... m d -> ... d m')) for _ in range(max_degree)])
+            self.x_final_norms = ModuleList([HighDegreeNorm(dim) for _ in range(max_degree)])
 
         # maybe project invariant
 
