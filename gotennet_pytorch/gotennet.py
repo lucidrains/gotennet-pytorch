@@ -26,10 +26,6 @@ from gotennet_pytorch.tensor_typing import Float, Int, Bool
 # m - order of each degree
 # l - degree
 
-# constants
-
-LayerNorm = partial(nn.LayerNorm, bias = False)
-
 # helper functions
 
 def exists(v):
@@ -52,7 +48,9 @@ def torch_default_dtype(dtype):
     yield
     torch.set_default_dtype(prev_dtype)
 
-# higher degree layernorm
+# normalization
+
+LayerNorm = partial(nn.LayerNorm, bias = False)
 
 class HighDegreeNorm(Module):
     def __init__(self, dim, eps = 1e-6):
