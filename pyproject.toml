@@ -1,6 +1,6 @@
 [project]
 name = "gotennet-pytorch"
-version = "0.0.14"
+version = "0.0.15"
 description = "GotenNet in Pytorch"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }

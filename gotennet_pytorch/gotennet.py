@@ -1,10 +1,12 @@
 from __future__ import annotations
+
+from functools import partial
 from contextlib import contextmanager
 from collections.abc import Sequence
 
 import torch
 from torch import nn, cat, Tensor, einsum
-from torch.nn import LayerNorm, Linear, Sequential, Module, ModuleList, ParameterList
+from torch.nn import Linear, Sequential, Module, ModuleList, ParameterList
 
 import einx
 from einops import reduce
@@ -23,6 +25,10 @@ from gotennet_pytorch.tensor_typing import Float, Int, Bool
 # d - feature
 # m - order of each degree
 # l - degree
+
+# constants
+
+LayerNorm = partial(nn.LayerNorm, bias = False)
 
 # helper functions
 
@@ -62,10 +68,10 @@ class Radial(Module):
             Rearrange('... -> ... 1'),
             Linear(1, hidden),
             nn.SiLU(),
-            LayerNorm(hidden, bias = False),
+            LayerNorm(hidden),
             Linear(hidden, hidden),
             nn.SiLU(),
-            LayerNorm(hidden, bias = False),
+            LayerNorm(hidden),
             Linear(hidden, dim)
         )
 
@@ -94,7 +100,7 @@ class NodeScalarFeatInit(Module):
 
         self.to_node_feats = Sequential(
             Linear(dim * 2, dim),
-            LayerNorm(dim, bias = False),
+            LayerNorm(dim),
             nn.SiLU(),
             Linear(dim, dim)
         )
@@ -152,7 +158,7 @@ class EdgeScalarFeatInit(Module):
         self.rel_dist_mlp = Sequential(
             Rearrange('... -> ... 1'),
             nn.Linear(1, dim_inner, bias = False),
-            LayerNorm(dim_inner, bias = False),
+            LayerNorm(dim_inner),
             nn.SiLU(),
             nn.Linear(dim_inner, dim, bias = False)
         )
@@ -217,7 +223,7 @@ class EquivariantFeedForward(Module):
 
         self.mlps = ModuleList([
             Sequential(
-                LayerNorm(dim * 2, bias = False) if layernorm_input else nn.Identity(),
+                LayerNorm(dim * 2) if layernorm_input else nn.Identity(),
                 Linear(dim * 2, mlp_dim),
                 nn.SiLU(),
                 Linear(mlp_dim, dim * 2)
@@ -344,8 +350,8 @@ class GeometryAwareTensorAttention(Module):
 
         # eq (5) - layernorms are present in the diagram in figure 2. but not mentioned in the equations..
 
-        self.to_hi = LayerNorm(dim, bias = False)
-        self.to_hj = LayerNorm(dim, bias = False)
+        self.to_hi = LayerNorm(dim)
+        self.to_hj = LayerNorm(dim)
 
         self.to_queries = Linear(dim, dim_inner, bias = False)
         self.to_keys = Linear(dim, dim_inner, bias = False)
@@ -525,7 +531,8 @@ class GotenNet(Module):
         ff_kwargs: dict = dict(),
         cutoff_kwargs: dict = dict(),
         return_coors = True,
-        proj_invariant_dim = None
+        proj_invariant_dim = None,
+        final_norm = True
     ):
         super().__init__()
         self.accept_embed = accept_embed
@@ -563,6 +570,15 @@ class GotenNet(Module):
                 GeometryAwareTensorAttention(dim, max_degree, dim_head, heads, mlp_expansion_factor),
                 EquivariantFeedForward(dim, max_degree, mlp_expansion_factor),
             ]))
+
+        # not mentioned in paper, but transformers need a final norm
+
+        self.final_norm = final_norm
+
+        if final_norm:
+            self.h_final_norm = nn.LayerNorm(dim)
+
+            self.x_final_norms = ModuleList([Sequential(Rearrange('... d m -> ... m d'), LayerNorm(dim), Rearrange('... m d -> ... d m')) for _ in range(max_degree)])
 
         # maybe project invariant
 
@@ -637,6 +653,12 @@ class GotenNet(Module):
 
             h, x = ff(h, x)
   
+        # maybe final norms
+
+        if self.final_norm:
+            h = self.h_final_norm(h)
+            x = [norm(one_degree) for one_degree, norm in zip(x, self.x_final_norms)]
+
         # maybe transform invariant h
 
         if exists(self.proj_invariant):
