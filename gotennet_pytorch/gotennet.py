@@ -386,6 +386,14 @@ class GeometryAwareTensorAttention(Module):
             Rearrange('... (s d) -> ... s d', s = S)
         )
 
+        # alphafold styled gating
+
+        self.to_gates = Sequential(
+            Linear(dim, heads * S),
+            nn.Sigmoid(),
+            Rearrange('b i (h s) -> b h i 1 s 1', s = S),
+        )
+
         # combine heads
 
         self.combine_heads = Sequential(
@@ -465,9 +473,13 @@ class GeometryAwareTensorAttention(Module):
 
         sea_ij = sea_ij + einx.multiply('... i j s d, ... j s d -> ... i j s d', edge_values, post_attn_values)
 
+        # alphafold style gating
+
+        out = sea_ij * self.to_gates(hi)
+
         # combine heads - not in paper for some reason, but attention heads mentioned, so must be necessary?
 
-        out = self.merge_heads(sea_ij)
+        out = self.merge_heads(out)
 
         out = self.combine_heads(out)
 
