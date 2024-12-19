@@ -23,6 +23,7 @@ from gotennet_pytorch.tensor_typing import Float, Int, Bool
 # b - batch
 # h - heads
 # n - sequence
+# m - sequence (neighbors)
 # i, j - source and target sequence
 # d - feature
 # m - order of each degree
@@ -122,10 +123,10 @@ class NodeScalarFeatInit(Module):
     def forward(
         self,
         atoms: Int['b n'] | Float['b n d'],
-        rel_dist: Float['b i j'],
-        adj_mat: Bool['b i j'] | None = None,
-        neighbor_indices: Int['b i j'] | None = None,
-        neighbor_mask: Bool['b i j'] | None = None,
+        rel_dist: Float['b n m'],
+        adj_mat: Bool['b n m'] | None = None,
+        neighbor_indices: Int['b n m'] | None = None,
+        neighbor_mask: Bool['b n m'] | None = None,
         mask: Bool['b n'] | None = None,
     ) -> Float['b n d']:
 
@@ -183,9 +184,9 @@ class EdgeScalarFeatInit(Module):
     def forward(
         self,
         h: Float['b n d'],
-        rel_dist: Float['b i j'],
-        neighbor_indices: Int['b i j'] | None = None
-    ) -> Float['b i j d']:
+        rel_dist: Float['b n m'],
+        neighbor_indices: Int['b n m'] | None = None
+    ) -> Float['b n m d']:
 
         if exists(neighbor_indices):
             h_neighbors = get_at('b [n] d, b i j -> b i j d', h, neighbor_indices)
@@ -296,10 +297,10 @@ class HierarchicalTensorRefinement(Module):
 
     def forward(
         self,
-        t_ij: Float['b i j d'],
+        t_ij: Float['b n m d'],
         x: Sequence[Float['b n d _'], ...],
-        neighbor_indices: Int['b i j'] | None = None,
-    ) -> Float['b n n d']:
+        neighbor_indices: Int['b n m'] | None = None,
+    ) -> Float['b n m d']:
 
         # eq (10)
 
@@ -414,12 +415,12 @@ class GeometryAwareTensorAttention(Module):
     def forward(
         self,
         h: Float['b n d'],
-        t_ij: Float['b i j d'],
-        r_ij: Sequence[Float['b i j _'], ...],
+        t_ij: Float['b n m d'],
+        r_ij: Sequence[Float['b n m _'], ...],
         x: Sequence[Float['b n d _'], ...] | None = None,
         mask: Bool['b n'] | None = None,
-        neighbor_indices: Int['b i j'] | None = None,
-        neighbor_mask: Bool['b i j'] | None = None
+        neighbor_indices: Int['b n m'] | None = None,
+        neighbor_mask: Bool['b n m'] | None = None
     ):
         # validation
 
@@ -649,8 +650,8 @@ class GotenNet(Module):
 
         # figure out neighbors, if needed
 
-        neighbor_indices: Int['b i j'] | None = None
-        neighbor_mask: Bool['b i j'] | None = None
+        neighbor_indices: Int['b n m'] | None = None
+        neighbor_mask: Bool['b n m'] | None = None
 
         if exists(self.cutoff_radius):
 
