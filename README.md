@@ -1,6 +1,6 @@
 <img src="./gotennet.png" width="450px"></img>
 
-## GotenNet - Pytorch (wip)
+## GotenNet - Pytorch
 
 Implementation of <a href="https://openreview.net/forum?id=5wxCQDtbMo">GotenNet</a>, new SOTA 3d equivariant transformer, in Pytorch
 

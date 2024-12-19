@@ -9,7 +9,9 @@ from torch import nn, cat, Tensor, einsum
 from torch.nn import Linear, Sequential, Module, ModuleList, ParameterList
 
 import einx
-from einops import reduce
+from einx import get_at
+
+from einops import repeat, reduce
 from einops.layers.torch import Rearrange
 
 from e3nn.o3 import spherical_harmonics
@@ -120,31 +122,38 @@ class NodeScalarFeatInit(Module):
     def forward(
         self,
         atoms: Int['b n'] | Float['b n d'],
-        rel_dist: Float['b n n'],
-        adj_mat: Bool['b n n'] | None = None,
+        rel_dist: Float['b i j'],
+        adj_mat: Bool['b i j'] | None = None,
+        neighbor_indices: Int['b i j'] | None = None,
+        neighbor_mask: Bool['b i j'] | None = None,
         mask: Bool['b n'] | None = None,
     ) -> Float['b n d']:
 
         dtype = rel_dist.dtype
         batch, seq, device = *atoms.shape[:2], atoms.device
 
-        eye = torch.eye(seq, device = device, dtype = torch.bool)
-
-        if exists(adj_mat):
-            adj_mat = adj_mat & ~eye # remove self from adjacency matrix
-        else:
-            adj_mat = torch.ones((batch, seq, seq), device = device, dtype = dtype)
+        if not exists(adj_mat):
+            adj_mat = torch.ones_like(rel_dist, device = device, dtype = dtype)
 
         embeds = self.atom_embed(atoms)
 
         rel_dist_feats = self.rel_dist_mlp(rel_dist)
 
-        if exists(mask):
-            rel_dist_feats = einx.where('b j, b i j d, -> b i j d', mask, rel_dist_feats, 0.)
+        if exists(neighbor_indices):
+            if exists(neighbor_mask):
+                rel_dist_feats = einx.where('b i j, b i j d, -> b i j d', neighbor_mask, rel_dist_feats, 0.)
+        else:
+            if exists(mask):
+                rel_dist_feats = einx.where('b j, b i j d, -> b i j d', mask, rel_dist_feats, 0.)
 
         neighbor_embeds = self.neighbor_atom_embed(atoms)
 
-        neighbor_feats = einsum('b i j, b i j d, b j d -> b i d', adj_mat.type(dtype), rel_dist_feats, neighbor_embeds)
+        if exists(neighbor_indices):
+            neighbor_embeds = get_at('b [n] d, b i j -> b i j d', neighbor_embeds, neighbor_indices)
+
+            neighbor_feats = einsum('b i j, b i j d, b i j d -> b i d', adj_mat.type(dtype), rel_dist_feats, neighbor_embeds)
+        else:
+            neighbor_feats = einsum('b i j, b i j d, b j d -> b i d', adj_mat.type(dtype), rel_dist_feats, neighbor_embeds)
 
         self_and_neighbor = torch.cat((embeds, neighbor_feats), dim = -1)
 
@@ -174,10 +183,16 @@ class EdgeScalarFeatInit(Module):
     def forward(
         self,
         h: Float['b n d'],
-        rel_dist: Float['b n n']
-    ) -> Float['b n n d']:
+        rel_dist: Float['b i j'],
+        neighbor_indices: Int['b i j'] | None = None
+    ) -> Float['b i j d']:
 
-        outer_sum_feats = einx.add('b i d, b j d -> b i j d', h, h)
+        if exists(neighbor_indices):
+            h_neighbors = get_at('b [n] d, b i j -> b i j d', h, neighbor_indices)
+
+            outer_sum_feats = einx.add('b i d, b i j d -> b i j d', h, h_neighbors)
+        else:
+            outer_sum_feats = einx.add('b i d, b j d -> b i j d', h, h)
 
         rel_dist_feats = self.rel_dist_mlp(rel_dist)
 
@@ -281,8 +296,9 @@ class HierarchicalTensorRefinement(Module):
 
     def forward(
         self,
-        t_ij: Float['b n n d'],
+        t_ij: Float['b i j d'],
         x: Sequence[Float['b n d _'], ...],
+        neighbor_indices: Int['b i j'] | None = None,
     ) -> Float['b n n d']:
 
         # eq (10)
@@ -293,7 +309,12 @@ class HierarchicalTensorRefinement(Module):
 
         # eq (11)
 
-        inner_product = [einsum('... i d m, ... j d m -> ... i j d', one_degree_query, one_degree_key) for one_degree_query, one_degree_key in zip(queries, keys)]
+        if exists(neighbor_indices):
+            keys = [get_at('b [n] d m, b i j -> b i j d m', one_degree_key, neighbor_indices) for one_degree_key in keys]
+
+            inner_product = [einsum('... i d m, ... i j d m -> ... i j d', one_degree_query, one_degree_key) for one_degree_query, one_degree_key in zip(queries, keys)]
+        else:
+            inner_product = [einsum('... i d m, ... j d m -> ... i j d', one_degree_query, one_degree_key) for one_degree_query, one_degree_key in zip(queries, keys)]
 
         w_ij = cat(inner_product, dim = -1)
 
@@ -393,10 +414,12 @@ class GeometryAwareTensorAttention(Module):
     def forward(
         self,
         h: Float['b n d'],
-        t_ij: Float['b n n d'],
-        r_ij: Sequence[Float['b n n _'], ...],
+        t_ij: Float['b i j d'],
+        r_ij: Sequence[Float['b i j _'], ...],
         x: Sequence[Float['b n d _'], ...] | None = None,
         mask: Bool['b n'] | None = None,
+        neighbor_indices: Int['b i j'] | None = None,
+        neighbor_mask: Bool['b i j'] | None = None
     ):
         # validation
 
@@ -411,6 +434,9 @@ class GeometryAwareTensorAttention(Module):
 
         hi = self.to_hi(h)
         hj = self.to_hj(h)
+
+        if exists(neighbor_indices):
+            hj = get_at('b [n] d, b i j -> b i j d', hj, neighbor_indices)
 
         queries = self.to_queries(hi)
 
@@ -434,7 +460,10 @@ class GeometryAwareTensorAttention(Module):
 
         # unsure why there is a k-dimension in the paper math notation, in addition to i, j
 
-        keys = einx.multiply('... j d, ... i j s d -> ... i j s d', keys, edge_keys)
+        if exists(neighbor_indices):
+            keys = einx.multiply('... i j d, ... i j s d -> ... i j s d', keys, edge_keys)
+        else:
+            keys = einx.multiply('... j d, ... i j s d -> ... i j s d', keys, edge_keys)
 
         # sim
 
@@ -442,8 +471,12 @@ class GeometryAwareTensorAttention(Module):
 
         # masking
 
-        if exists(mask):
-            sim = einx.where('b j, b h i j s, -> b h i j s', mask, sim, max_neg_value(sim))
+        if exists(neighbor_indices):
+            if exists(neighbor_mask):
+                sim = einx.where('b i j, b h i j s, -> b h i j s', neighbor_mask, sim, max_neg_value(sim))
+        else:
+            if exists(mask):
+                sim = einx.where('b j, b h i j s, -> b h i j s', mask, sim, max_neg_value(sim))
 
         # attn
 
@@ -451,11 +484,17 @@ class GeometryAwareTensorAttention(Module):
 
         # aggregate values
 
-        sea_ij = einsum('... i j s, ... j s d -> ... i j s d', attn, values)
+        if exists(neighbor_indices):
+            sea_ij = einsum('... i j s, ... i j s d -> ... i j s d', attn, values)
+        else:
+            sea_ij = einsum('... i j s, ... j s d -> ... i j s d', attn, values)
 
         # eq (7)
 
-        sea_ij = sea_ij + einx.multiply('... i j s d, ... j s d -> ... i j s d', edge_values, post_attn_values)
+        if exists(neighbor_indices):
+            sea_ij = sea_ij + einx.multiply('... i j s d, ... i j s d -> ... i j s d', edge_values, post_attn_values)
+        else:
+            sea_ij = sea_ij + einx.multiply('... i j s d, ... j s d -> ... i j s d', edge_values, post_attn_values)
 
         # alphafold style gating
 
@@ -483,10 +522,17 @@ class GeometryAwareTensorAttention(Module):
 
         for one_degree, one_r_ij, one_degree_scale, one_r_ij_scale in zip(x, r_ij, x_scales.unbind(dim = -2), r_ij_scales.unbind(dim = -2)):
 
-            x_with_residual.append((
-                einsum('b j d m, b i j d -> b i d m', one_degree, one_degree_scale) +
-                einsum('b i j m, b i j d -> b i d m', one_r_ij, one_r_ij_scale)
-            ))
+            r_ij_residual = einsum('b i j m, b i j d -> b i d m', one_r_ij, one_r_ij_scale)
+
+            if exists(neighbor_indices):
+                one_degree_neighbors = get_at('b [n] d m, b i j -> b i j d m', one_degree, neighbor_indices)
+
+                x_ij_residual = einsum('b i j d m, b i j d -> b i d m', one_degree_neighbors, one_degree_scale)
+
+            else:
+                x_ij_residual = einsum('b j d m, b i j d -> b i d m', one_degree, one_degree_scale)
+
+            x_with_residual.append(r_ij_residual + x_ij_residual)
 
         return h_with_residual, x_with_residual
 
@@ -503,6 +549,8 @@ class GotenNet(Module):
         num_atoms = 14,
         heads = 8,
         dim_head = None,
+        cutoff_radius = None,
+        max_neighbors = float('inf'),
         mlp_expansion_factor = 2.,
         edge_init_mlp_expansion_factor = 4.,
         ff_kwargs: dict = dict(),
@@ -517,6 +565,12 @@ class GotenNet(Module):
         self.max_degree = max_degree
 
         dim_edge_refinement = default(dim_edge_refinement, dim)
+
+        # only consider neighbors less than `cutoff_radius`, in paper, they used ~ 5 angstroms
+        # can further randomly select from eligible neighbors with `max_neighbors`
+
+        self.cutoff_radius = cutoff_radius
+        self.max_neighbors = max_neighbors
 
         # node and edge feature init
 
@@ -577,7 +631,7 @@ class GotenNet(Module):
     ):
         assert (atoms.dtype in (torch.int, torch.long)) ^ self.accept_embed
 
-        batch, seq_len = atoms.shape[:2]
+        batch, seq_len, device = *atoms.shape[:2], atoms.device
 
         assert not (exists(lens) and exists(mask)), '`lens` and `masks` cannot be both passed in'
 
@@ -587,11 +641,46 @@ class GotenNet(Module):
         rel_pos = einx.subtract('b i c, b j c -> b i j c', coors, coors)
         rel_dist = rel_pos.norm(dim = -1)
 
+        # process adjacency matrix
+
+        if exists(adj_mat):
+            eye = torch.eye(seq_len, device = device, dtype = torch.bool)
+            adj_mat = adj_mat & ~eye # remove self from adjacency matrix
+
+        # figure out neighbors, if needed
+
+        neighbor_indices: Int['b i j'] | None = None
+        neighbor_mask: Bool['b i j'] | None = None
+
+        if exists(self.cutoff_radius):
+
+            if exists(mask):
+                rel_dist = einx.where('b j, b i j, -> b i j', mask, rel_dist, 1e6)
+
+            is_neighbor = (rel_dist <= self.cutoff_radius).float()
+
+            max_eligible_neighbors = is_neighbor.sum(dim = -1).long().amax().item()
+            max_neighbors = min(max_eligible_neighbors, self.max_neighbors)
+
+            noised_is_neighbor = is_neighbor + torch.rand_like(is_neighbor) * 1e-1
+
+            neighbor_indices = noised_is_neighbor.topk(k = max_neighbors).indices
+
+            if exists(adj_mat):
+                adj_mat = adj_mat.gather(-1, neighbor_indices)
+
+            neighbor_dist = rel_dist.gather(-1, neighbor_indices)
+
+            neighbor_mask = neighbor_dist <= self.cutoff_radius
+
+            rel_dist = neighbor_dist
+            rel_pos = rel_pos.gather(-2, repeat(neighbor_indices, '... -> ... c', c = 3))
+
         # initialization
 
-        h = self.node_init(atoms, rel_dist, adj_mat, mask = mask)
+        h = self.node_init(atoms, rel_dist, adj_mat, mask = mask, neighbor_indices = neighbor_indices, neighbor_mask = neighbor_mask)
 
-        t_ij = self.edge_init(h, rel_dist)
+        t_ij = self.edge_init(h, rel_dist, neighbor_indices = neighbor_indices)
 
         # constitute r_ij from section 3.1
 
@@ -603,7 +692,7 @@ class GotenNet(Module):
 
         # init the high degrees
 
-        x = self.high_degree_init(h, t_ij, r_ij, mask = mask)
+        x = self.high_degree_init(h, t_ij, r_ij, mask = mask, neighbor_indices = neighbor_indices, neighbor_mask = neighbor_mask)
 
         # go through the layers
 
@@ -611,11 +700,11 @@ class GotenNet(Module):
 
             # hierarchical tensor refinement
 
-            t_ij = htr(t_ij, x)
+            t_ij = htr(t_ij, x, neighbor_indices = neighbor_indices)
 
             # followed by attention, but of course
 
-            h, x = attn(h, t_ij, r_ij, x, mask = mask)
+            h, x = attn(h, t_ij, r_ij, x, mask = mask, neighbor_indices = neighbor_indices, neighbor_mask = neighbor_mask)
 
             # feedforward
 
