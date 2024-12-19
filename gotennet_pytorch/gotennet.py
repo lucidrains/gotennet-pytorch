@@ -123,7 +123,6 @@ class NodeScalarFeatInit(Module):
         rel_dist: Float['b n n'],
         adj_mat: Bool['b n n'] | None = None,
         mask: Bool['b n'] | None = None,
-        radius_cutoff_softmask: Float['b n n'] | None = None
     ) -> Float['b n d']:
 
         dtype = rel_dist.dtype
@@ -144,9 +143,6 @@ class NodeScalarFeatInit(Module):
             rel_dist_feats = einx.where('b j, b i j d, -> b i j d', mask, rel_dist_feats, 0.)
 
         neighbor_embeds = self.neighbor_atom_embed(atoms)
-
-        if exists(radius_cutoff_softmask):
-            rel_dist_feats = einx.multiply('b i j d, b i j -> b i j d', rel_dist_feats, radius_cutoff_softmask)
 
         neighbor_feats = einsum('b i j, b i j d, b j d -> b i d', adj_mat.type(dtype), rel_dist_feats, neighbor_embeds)
 
@@ -186,30 +182,6 @@ class EdgeScalarFeatInit(Module):
         rel_dist_feats = self.rel_dist_mlp(rel_dist)
 
         return outer_sum_feats + rel_dist_feats
-
-# cutoff function
-# never expounded upon in the paper. just improvise a smooth version
-
-class SoftCutoff(Module):
-    def __init__(
-        self,
-        cutoff_dist = 5., # they have it at about 4-5 angstroms
-        sharpness = 10.   # multiply value before sigmoid
-    ):
-        super().__init__()
-        self.cutoff_dist = cutoff_dist
-        self.sharpness = sharpness
-
-    def forward(
-        self,
-        rel_dist: Float['b n n']
-    ) -> Float['b n n']:
-
-        shifted_and_scaled = (rel_dist - self.cutoff_dist) * self.sharpness
-
-        modulation = shifted_and_scaled.sigmoid()
-
-        return 1. - modulation
 
 # equivariant feedforward
 # section 3.5
@@ -425,7 +397,6 @@ class GeometryAwareTensorAttention(Module):
         r_ij: Sequence[Float['b n n _'], ...],
         x: Sequence[Float['b n d _'], ...] | None = None,
         mask: Bool['b n'] | None = None,
-        radius_cutoff_softmask: Float['b n n'] | None = None
     ):
         # validation
 
@@ -482,11 +453,6 @@ class GeometryAwareTensorAttention(Module):
 
         sea_ij = einsum('... i j s, ... j s d -> ... i j s d', attn, values)
 
-        # apply soft radius cutoff to projected features off t_ij from the hierarchical tensor refinemnt module
-
-        if exists(radius_cutoff_softmask):
-            edge_values = einx.multiply('b h i j s d, b i j -> b h i j s d', edge_values, radius_cutoff_softmask)
-
         # eq (7)
 
         sea_ij = sea_ij + einx.multiply('... i j s d, ... j s d -> ... i j s d', edge_values, post_attn_values)
@@ -539,9 +505,7 @@ class GotenNet(Module):
         dim_head = None,
         mlp_expansion_factor = 2.,
         edge_init_mlp_expansion_factor = 4.,
-        cutoff_radius = 5.,
         ff_kwargs: dict = dict(),
-        cutoff_kwargs: dict = dict(),
         return_coors = True,
         proj_invariant_dim = None,
         final_norm = True
@@ -553,10 +517,6 @@ class GotenNet(Module):
         self.max_degree = max_degree
 
         dim_edge_refinement = default(dim_edge_refinement, dim)
-
-        # soft cutoff
-
-        self.soft_cutoff = SoftCutoff(cutoff_radius, **cutoff_kwargs)
 
         # node and edge feature init
 
@@ -627,13 +587,9 @@ class GotenNet(Module):
         rel_pos = einx.subtract('b i c, b j c -> b i j c', coors, coors)
         rel_dist = rel_pos.norm(dim = -1)
 
-        # soft cutoff
-
-        radius_cutoff_softmask = self.soft_cutoff(rel_dist)
-
         # initialization
 
-        h = self.node_init(atoms, rel_dist, adj_mat, mask = mask, radius_cutoff_softmask = radius_cutoff_softmask)
+        h = self.node_init(atoms, rel_dist, adj_mat, mask = mask)
 
         t_ij = self.edge_init(h, rel_dist)
 
@@ -659,7 +615,7 @@ class GotenNet(Module):
 
             # followed by attention, but of course
 
-            h, x = attn(h, t_ij, r_ij, x, mask = mask, radius_cutoff_softmask = radius_cutoff_softmask)
+            h, x = attn(h, t_ij, r_ij, x, mask = mask)
 
             # feedforward
 
