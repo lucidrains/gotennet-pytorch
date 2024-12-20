@@ -436,11 +436,7 @@ class GeometryAwareTensorAttention(Module):
         hi = self.to_hi(h)
         hj = self.to_hj(h)
 
-        if exists(neighbor_indices):
-            hj = get_at('b [n] d, b i j -> b i j d', hj, neighbor_indices)
-
         queries = self.to_queries(hi)
-
         keys = self.to_keys(hj)
 
         # unsure why values are split into two, with one elementwise-multiplied with the edge values coming from t_ij
@@ -449,6 +445,13 @@ class GeometryAwareTensorAttention(Module):
         values = self.to_values(hj)
 
         post_attn_values = self.post_attn_h_values(hj)
+
+        if exists(neighbor_indices):
+            keys = get_at('b [n] ..., b i j -> b i j ...', keys, neighbor_indices)
+            values = get_at('b [n] ..., b i j -> b i j ...', values, neighbor_indices)
+            post_attn_values = get_at('b [n] ..., b i j -> b i j ...', post_attn_values, neighbor_indices)
+
+        # edge keys and values
 
         edge_keys = self.to_edge_keys(t_ij)
         edge_values = self.to_edge_values(t_ij)
@@ -663,15 +666,13 @@ class GotenNet(Module):
             max_eligible_neighbors = is_neighbor.sum(dim = -1).long().amax().item()
             max_neighbors = min(max_eligible_neighbors, self.max_neighbors)
 
-            noised_is_neighbor = is_neighbor + torch.rand_like(is_neighbor) * 1e-1
-
-            neighbor_indices = noised_is_neighbor.topk(k = max_neighbors).indices
+            noised_is_neighbor = is_neighbor + torch.rand_like(is_neighbor) * 1e-3
+            neighbor_indices = noised_is_neighbor.topk(k = max_neighbors, dim = -1).indices
 
             if exists(adj_mat):
                 adj_mat = adj_mat.gather(-1, neighbor_indices)
 
             neighbor_dist = rel_dist.gather(-1, neighbor_indices)
-
             neighbor_mask = neighbor_dist <= self.cutoff_radius
 
             rel_dist = neighbor_dist
