@@ -337,7 +337,8 @@ class GeometryAwareTensorAttention(Module):
         dim_head = None,
         heads = 8,
         mlp_expansion_factor = 2.,
-        only_init_high_degree_feats = False # if set to True, only returns high degree steerable features eq (4) in section 3.2
+        only_init_high_degree_feats = False, # if set to True, only returns high degree steerable features eq (4) in section 3.2
+        learned_value_residual_mix = False,
     ):
         super().__init__()
         self.only_init_high_degree_feats = only_init_high_degree_feats
@@ -375,6 +376,14 @@ class GeometryAwareTensorAttention(Module):
             Linear(dim_mlp_inner, S * dim_inner),
             Rearrange('... (s d) -> ... s d', s = S)
         )
+
+        # value residual, iclr 2024 paper that is certain to take off
+
+        self.to_value_residual_mix = Sequential(
+            Linear(dim, heads, bias = False),
+            nn.Sigmoid(),
+            Rearrange('b n h -> b h n 1 1')
+        ) if learned_value_residual_mix else None
 
         # eq (6) second half: t_ij -> edge scalar features
 
@@ -420,7 +429,9 @@ class GeometryAwareTensorAttention(Module):
         x: Sequence[Float['b n d _'], ...] | None = None,
         mask: Bool['b n'] | None = None,
         neighbor_indices: Int['b n m'] | None = None,
-        neighbor_mask: Bool['b n m'] | None = None
+        neighbor_mask: Bool['b n m'] | None = None,
+        return_value_residual = False,
+        value_residuals: Tuple[Tensor, Tensor] | None = None
     ):
         # validation
 
@@ -443,13 +454,7 @@ class GeometryAwareTensorAttention(Module):
         # need another pair of eyes to double check
 
         values = self.to_values(hj)
-
         post_attn_values = self.post_attn_h_values(hj)
-
-        if exists(neighbor_indices):
-            keys = get_at('b [n] ..., b i j -> b i j ...', keys, neighbor_indices)
-            values = get_at('b [n] ..., b i j -> b i j ...', values, neighbor_indices)
-            post_attn_values = get_at('b [n] ..., b i j -> b i j ...', post_attn_values, neighbor_indices)
 
         # edge keys and values
 
@@ -459,6 +464,27 @@ class GeometryAwareTensorAttention(Module):
         # split out attention heads
 
         queries, keys, values, post_attn_values, edge_keys, edge_values = map(self.split_heads, (queries, keys, values, post_attn_values, edge_keys, edge_values))
+
+        # value residual mixing
+
+        next_value_residuals = (values, post_attn_values)
+
+        if exists(self.to_value_residual_mix):
+            assert exists(value_residuals)
+
+            value_residual, post_attn_values_residual = value_residuals
+
+            mix = self.to_value_residual_mix(hi)
+
+            values = values.lerp(value_residual, mix)
+            post_attn_values = post_attn_values.lerp(post_attn_values_residual, mix)
+
+        # account for neighbor logic
+
+        if exists(neighbor_indices):
+            keys = get_at('b h [n] ..., b i j -> b h i j ...', keys, neighbor_indices)
+            values = get_at('b h [n] ..., b i j -> b h i j ...', values, neighbor_indices)
+            post_attn_values = get_at('b h [n] ..., b i j -> b h i j ...', post_attn_values, neighbor_indices)
 
         # eq (6)
 
@@ -513,7 +539,8 @@ class GeometryAwareTensorAttention(Module):
         # maybe eq (4) and early return
 
         if self.only_init_high_degree_feats:
-            return [einsum('... i j m, ... i j d -> ... i d m', one_r_ij, one_r_ij_scale) for one_r_ij, one_r_ij_scale in zip(r_ij, out.unbind(dim = -2))]
+            x_ij_init = [einsum('... i j m, ... i j d -> ... i d m', one_r_ij, one_r_ij_scale) for one_r_ij, one_r_ij_scale in zip(r_ij, out.unbind(dim = -2))]
+            return x_ij_init
 
         # split out all the O's (eq 7 second half)
 
@@ -538,7 +565,12 @@ class GeometryAwareTensorAttention(Module):
 
             x_with_residual.append(r_ij_residual + x_ij_residual)
 
-        return h_with_residual, x_with_residual
+        out = (h_with_residual, x_with_residual)
+
+        if not return_value_residual:
+            return out
+
+        return out, next_value_residuals
 
 # main class
 
@@ -594,10 +626,12 @@ class GotenNet(Module):
 
         self.layers = ModuleList([])
 
-        for _ in range(depth):
+        for layer_index in range(depth):
+            is_first = layer_index == 0
+
             self.layers.append(ModuleList([
                 HierarchicalTensorRefinement(dim, dim_edge_refinement, max_degree),
-                GeometryAwareTensorAttention(dim, max_degree, dim_head, heads, mlp_expansion_factor),
+                GeometryAwareTensorAttention(dim, max_degree, dim_head, heads, mlp_expansion_factor, learned_value_residual_mix = not is_first),
                 EquivariantFeedForward(dim, max_degree, mlp_expansion_factor),
             ]))
 
@@ -696,6 +730,10 @@ class GotenNet(Module):
 
         x = self.high_degree_init(h, t_ij, r_ij, mask = mask, neighbor_indices = neighbor_indices, neighbor_mask = neighbor_mask)
 
+        # value residual
+
+        value_residuals = None
+
         # go through the layers
 
         for htr, attn, ff in self.layers:
@@ -706,7 +744,11 @@ class GotenNet(Module):
 
             # followed by attention, but of course
 
-            h, x = attn(h, t_ij, r_ij, x, mask = mask, neighbor_indices = neighbor_indices, neighbor_mask = neighbor_mask)
+            (h, x), next_value_residuals = attn(h, t_ij, r_ij, x, mask = mask, neighbor_indices = neighbor_indices, neighbor_mask = neighbor_mask, value_residuals = value_residuals, return_value_residual = True)
+
+            # handle value residual
+
+            value_residuals = default(value_residuals, next_value_residuals)
 
             # feedforward
 

@@ -48,3 +48,12 @@ invariant, coors_out = model(atom_ids, adj_mat = adj_mat, coors = coors, lens = 
     note    = {under review}
 }
 ```
+
+```bibtex
+@inproceedings{Zhou2024ValueRL,
+    title   = {Value Residual Learning For Alleviating Attention Concentration In Transformers},
+    author  = {Zhanchao Zhou and Tianyi Wu and Zhiyun Jiang and Zhenzhong Lan},
+    year    = {2024},
+    url     = {https://api.semanticscholar.org/CorpusID:273532030}
+}
+```
