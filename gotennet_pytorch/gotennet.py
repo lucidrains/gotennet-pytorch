@@ -11,7 +11,7 @@ from torch.nn import Linear, Sequential, Module, ModuleList, ParameterList
 import einx
 from einx import get_at
 
-from einops import repeat, reduce
+from einops import rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
 
 from e3nn.o3 import spherical_harmonics
@@ -467,17 +467,24 @@ class GeometryAwareTensorAttention(Module):
 
         # value residual mixing
 
-        next_value_residuals = (values, post_attn_values)
+        next_value_residuals = (values, post_attn_values, edge_values)
 
         if exists(self.to_value_residual_mix):
             assert exists(value_residuals)
 
-            value_residual, post_attn_values_residual = value_residuals
+            value_residual, post_attn_values_residual, edge_values_residual = value_residuals
 
             mix = self.to_value_residual_mix(hi)
 
             values = values.lerp(value_residual, mix)
             post_attn_values = post_attn_values.lerp(post_attn_values_residual, mix)
+
+            if exists(neighbor_indices):
+                mix = get_at('b h [n] ..., b i j -> b h i j ...', mix, neighbor_indices)
+            else:
+                mix = rearrange(mix, 'b h j ... -> b h 1 j ...')
+
+            edge_values = edge_values.lerp(edge_values_residual, mix)
 
         # account for neighbor logic
 
@@ -592,7 +599,8 @@ class GotenNet(Module):
         ff_kwargs: dict = dict(),
         return_coors = True,
         proj_invariant_dim = None,
-        final_norm = True
+        final_norm = True,
+        add_value_residual = True
     ):
         super().__init__()
         self.accept_embed = accept_embed
@@ -631,7 +639,7 @@ class GotenNet(Module):
 
             self.layers.append(ModuleList([
                 HierarchicalTensorRefinement(dim, dim_edge_refinement, max_degree),
-                GeometryAwareTensorAttention(dim, max_degree, dim_head, heads, mlp_expansion_factor, learned_value_residual_mix = not is_first),
+                GeometryAwareTensorAttention(dim, max_degree, dim_head, heads, mlp_expansion_factor, learned_value_residual_mix = add_value_residual and not is_first),
                 EquivariantFeedForward(dim, max_degree, mlp_expansion_factor),
             ]))
 
