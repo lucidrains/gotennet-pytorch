@@ -44,6 +44,9 @@ def mask_from_lens(lens, total_len):
     seq = torch.arange(total_len, device = lens.device)
     return einx.less('n, b -> b n', seq, lens)
 
+def softclamp(t, value = 50.):
+    return (t / value).tanh() * value
+
 @contextmanager
 def torch_default_dtype(dtype):
     prev_dtype = torch.get_default_dtype()
@@ -336,6 +339,7 @@ class GeometryAwareTensorAttention(Module):
         max_degree,
         dim_head = None,
         heads = 8,
+        softclamp_value = 50.,
         mlp_expansion_factor = 2.,
         only_init_high_degree_feats = False, # if set to True, only returns high degree steerable features eq (4) in section 3.2
         learned_value_residual_mix = False,
@@ -364,6 +368,10 @@ class GeometryAwareTensorAttention(Module):
         self.to_keys = Linear(dim, dim_inner, bias = False)
 
         dim_mlp_inner = int(mlp_expansion_factor * dim_inner)
+
+        # attention softclamping, used in Gemma
+
+        self.softclamp = partial(softclamp, value = softclamp_value)
 
         # S contains two parts of L_max (one to modulate each degree of r_ij, another to modulate each X_j, then one final to modulate h). incidentally, this overlaps with eq. (m = 2 * L + 1), causing much confusion, cleared up in openreview
 
@@ -502,9 +510,13 @@ class GeometryAwareTensorAttention(Module):
         else:
             keys = einx.multiply('... j d, ... i j s d -> ... i j s d', keys, edge_keys)
 
-        # sim
+        # similarities
 
         sim = einsum('... i d, ... i j s d -> ... i j s', queries, keys)
+
+        # soft clamping - used successfully in gemma to prevent attention logit overflows
+
+        sim = self.softclamp(sim)
 
         # masking
 
@@ -515,7 +527,7 @@ class GeometryAwareTensorAttention(Module):
             if exists(mask):
                 sim = einx.where('b j, b h i j s, -> b h i j s', mask, sim, max_neg_value(sim))
 
-        # attn
+        # attend
 
         attn = sim.softmax(dim = -2)
 
