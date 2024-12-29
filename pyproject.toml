@@ -1,6 +1,6 @@
 [project]
 name = "gotennet-pytorch"
-version = "0.1.4"
+version = "0.2.0"
 description = "GotenNet in Pytorch"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
@@ -29,6 +29,7 @@ dependencies = [
     'einx>=0.3.0',
     'einops>=0.8.0',
     'jaxtyping',
+    'hyper-connections>=0.1.0',
     'torch>=2.4',    
 ]
 
