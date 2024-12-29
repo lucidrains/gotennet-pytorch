@@ -1,3 +1,4 @@
+import pytest
 import torch
 from torch import sin, cos, stack
 from einops import rearrange
@@ -67,7 +68,8 @@ def test_invariant():
     assert torch.allclose(inv1, inv2, atol = 1e-5)
 
 @torch_default_dtype(torch.float64)
-def test_equivariant():
+@pytest.mark.parametrize('num_residual_streams', (1, 4))
+def test_equivariant(num_residual_streams):
 
     model = GotenNet(
         dim = 256,
@@ -79,7 +81,8 @@ def test_equivariant():
         return_coors = True,
         ff_kwargs = dict(
             layernorm_input = True
-        )
+        ),
+        num_residual_streams = num_residual_streams
     )
 
     random_rotation = rot(*torch.randn(3))
@@ -121,7 +124,8 @@ def test_equivariant_with_atom_feats():
     assert torch.allclose(coors1 @ random_rotation, coors2, atol = 1e-5)
 
 @torch_default_dtype(torch.float64)
-def test_equivariant_neighbors():
+@pytest.mark.parametrize('num_residual_streams', (1, 4))
+def test_equivariant_neighbors(num_residual_streams):
 
     model = GotenNet(
         dim = 256,
@@ -132,6 +136,7 @@ def test_equivariant_neighbors():
         cutoff_radius = 5.,
         dim_edge_refinement = 256,
         return_coors = True,
+        num_residual_streams = num_residual_streams,
         ff_kwargs = dict(
             layernorm_input = True
         )

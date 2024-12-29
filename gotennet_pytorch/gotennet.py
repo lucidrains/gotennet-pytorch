@@ -18,6 +18,8 @@ from e3nn.o3 import spherical_harmonics
 
 from gotennet_pytorch.tensor_typing import Float, Int, Bool
 
+from hyper_connections import get_init_and_expand_reduce_stream_functions
+
 # ein notation
 
 # b - batch
@@ -265,12 +267,9 @@ class EquivariantFeedForward(Module):
 
             x_residuals.append(modulated_one_degree)
 
-        # handle residuals within the module
+        # return residuals
 
-        h = h + h_residual
-        x = [*map(sum, zip(x, x_residuals))]
-
-        return h, x
+        return h_residual, x_residuals
 
 # hierarchical tensor refinement
 # section 3.4
@@ -567,8 +566,8 @@ class GeometryAwareTensorAttention(Module):
 
         # modulate with invariant scales and sum residuals
 
-        h_with_residual = h + reduce(h_scales, 'b i j 1 d -> b i d', 'sum')
-        x_with_residual = []
+        h_residual = reduce(h_scales, 'b i j 1 d -> b i d', 'sum')
+        x_residuals = []
 
         for one_degree, one_r_ij, one_degree_scale, one_r_ij_scale in zip(x, r_ij, x_scales.unbind(dim = -2), r_ij_scales.unbind(dim = -2)):
 
@@ -582,9 +581,9 @@ class GeometryAwareTensorAttention(Module):
             else:
                 x_ij_residual = einsum('b j d m, b i j d -> b i d m', one_degree, one_degree_scale)
 
-            x_with_residual.append(r_ij_residual + x_ij_residual)
+            x_residuals.append(r_ij_residual + x_ij_residual)
 
-        out = (h_with_residual, x_with_residual)
+        out = (h_residual, x_residuals)
 
         if not return_value_residual:
             return out
@@ -612,7 +611,8 @@ class GotenNet(Module):
         return_coors = True,
         proj_invariant_dim = None,
         final_norm = True,
-        add_value_residual = True
+        add_value_residual = True,
+        num_residual_streams = 4
     ):
         super().__init__()
         self.accept_embed = accept_embed
@@ -621,6 +621,10 @@ class GotenNet(Module):
         self.max_degree = max_degree
 
         dim_edge_refinement = default(dim_edge_refinement, dim)
+
+        # hyper connections, applied to invariant h for starters
+
+        init_hyper_conn, self.expand_streams, self.reduce_streams = get_init_and_expand_reduce_stream_functions(num_residual_streams, disable = num_residual_streams == 1)
 
         # only consider neighbors less than `cutoff_radius`, in paper, they used ~ 5 angstroms
         # can further randomly select from eligible neighbors with `max_neighbors`
@@ -645,6 +649,7 @@ class GotenNet(Module):
         # layers, thus deep learning
 
         self.layers = ModuleList([])
+        self.residual_fns = ModuleList([])
 
         for layer_index in range(depth):
             is_first = layer_index == 0
@@ -653,6 +658,11 @@ class GotenNet(Module):
                 HierarchicalTensorRefinement(dim, dim_edge_refinement, max_degree),
                 GeometryAwareTensorAttention(dim, max_degree, dim_head, heads, mlp_expansion_factor, learned_value_residual_mix = add_value_residual and not is_first),
                 EquivariantFeedForward(dim, max_degree, mlp_expansion_factor),
+            ]))
+
+            self.residual_fns.append(ModuleList([
+                init_hyper_conn(dim = dim),
+                init_hyper_conn(dim = dim),
             ]))
 
         # not mentioned in paper, but transformers need a final norm
@@ -754,9 +764,13 @@ class GotenNet(Module):
 
         value_residuals = None
 
+        # maybe expand invariant h residual stream
+
+        h = self.expand_streams(h)
+
         # go through the layers
 
-        for htr, attn, ff in self.layers:
+        for (htr, attn, ff), (h_attn_residual_fn, h_ff_residual_fn) in zip(self.layers, self.residual_fns):
 
             # hierarchical tensor refinement
 
@@ -764,7 +778,14 @@ class GotenNet(Module):
 
             # followed by attention, but of course
 
-            (h, x), next_value_residuals = attn(h, t_ij, r_ij, x, mask = mask, neighbor_indices = neighbor_indices, neighbor_mask = neighbor_mask, value_residuals = value_residuals, return_value_residual = True)
+            h, add_attn_residual = h_attn_residual_fn(h)
+
+            (h_residual, x_residuals), next_value_residuals = attn(h, t_ij, r_ij, x, mask = mask, neighbor_indices = neighbor_indices, neighbor_mask = neighbor_mask, value_residuals = value_residuals, return_value_residual = True)
+
+            # add attention residuals
+
+            h = add_attn_residual(h_residual)
+            x = [*map(sum, zip(x, x_residuals))]
 
             # handle value residual
 
@@ -772,8 +793,17 @@ class GotenNet(Module):
 
             # feedforward
 
-            h, x = ff(h, x)
+            h, add_ff_residual = h_ff_residual_fn(h)
+
+            h_residual, x_residuals = ff(h, x)
+
+            # add feedforward residuals
+
+            h = add_ff_residual(h_residual)
+            x = [*map(sum, zip(x, x_residuals))]
   
+        h = self.reduce_streams(h)
+
         # maybe final norms
 
         if self.final_norm:
