@@ -141,6 +141,9 @@ class NodeScalarFeatInit(Module):
         if not exists(adj_mat):
             adj_mat = torch.ones_like(rel_dist, device = device, dtype = dtype)
 
+        if atoms.dtype in (torch.int, torch.long):
+            atoms = atoms.masked_fill(atoms < 0, 0)
+
         embeds = self.atom_embed(atoms)
 
         rel_dist_feats = self.rel_dist_mlp(rel_dist)
@@ -716,6 +719,12 @@ class GotenNet(Module):
 
         if exists(lens):
             mask = mask_from_lens(lens, seq_len)
+
+        # also allow for negative atom indices in place of `lens` or `mask`
+
+        if atoms.dtype in (torch.int, torch.long):
+            atom_mask = atoms >= 0
+            mask = default(mask, atom_mask)
 
         rel_pos = einx.subtract('b i c, b j c -> b i j c', coors, coors)
         rel_dist = rel_pos.norm(dim = -1)

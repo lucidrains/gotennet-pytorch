@@ -28,12 +28,11 @@ model = GotenNet(
     return_coors = False
 )
 
-atom_ids = torch.randint(0, 14, (1, 12))
+atom_ids = torch.randint(0, 14, (1, 12)) # negative atom indices will be assumed to be padding - length of molecule is thus `(atom_ids >= 0).sum(dim = -1)`
 coors = torch.randn(1, 12, 3)
 adj_mat = torch.randint(0, 2, (1, 12, 12)).bool()
-lens = torch.randint(1, 12, (1,))
 
-invariant, coors_out = model(atom_ids, adj_mat = adj_mat, coors = coors, lens = lens)
+invariant, coors_out = model(atom_ids, adj_mat = adj_mat, coors = coors)
 ```
 
 ## Citations
