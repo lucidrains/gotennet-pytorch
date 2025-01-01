@@ -45,7 +45,7 @@ def test_invariant():
     model = GotenNet(
         dim = 256,
         max_degree = 2,
-        depth = 1,
+        depth = 4,
         heads = 2,
         dim_head = 32,
         dim_edge_refinement = 256,
@@ -74,7 +74,7 @@ def test_equivariant(num_residual_streams):
     model = GotenNet(
         dim = 256,
         max_degree = 2,
-        depth = 1,
+        depth = 4,
         heads = 2,
         dim_head = 32,
         dim_edge_refinement = 256,
@@ -103,7 +103,7 @@ def test_equivariant_with_atom_feats():
     model = GotenNet(
         dim = 256,
         max_degree = 2,
-        depth = 1,
+        depth = 4,
         heads = 2,
         dim_head = 32,
         dim_edge_refinement = 256,
@@ -130,7 +130,7 @@ def test_equivariant_neighbors(num_residual_streams):
     model = GotenNet(
         dim = 256,
         max_degree = 2,
-        depth = 1,
+        depth = 4,
         heads = 2,
         dim_head = 32,
         cutoff_radius = 5.,

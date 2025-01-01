@@ -280,9 +280,11 @@ class HierarchicalTensorRefinement(Module):
         dim,
         dim_edge_refinement, # they made this value much higher for MD22 task. so it is an important hparam for certain more difficult tasks
         max_degree,
+        norm_edge_proj_input = True # this was not in the paper, but added or else network explodes at around depth 4
     ):
         super().__init__()
         assert max_degree > 0
+
 
         # in paper, queries share the same projection, but each higher degree has its own key projection
 
@@ -296,6 +298,10 @@ class HierarchicalTensorRefinement(Module):
 
         self.residue_update = nn.Linear(dim, dim, bias = False)
         self.edge_proj = nn.Linear(dim_edge_refinement * max_degree, dim, bias = False)
+
+        # norm not in diagram or paper, added to prevent t_ij from exploding
+
+        self.norm = LayerNorm(dim_edge_refinement * max_degree) if norm_edge_proj_input else nn.Identity()
 
     def forward(
         self,
@@ -321,12 +327,16 @@ class HierarchicalTensorRefinement(Module):
 
         w_ij = cat(inner_product, dim = -1)
 
+        # this was not in the paper, but added or else network explodes at around depth 4
+
+        w_ij = self.norm(w_ij)
+
         # eq (12)
 
         edge_proj_out = self.edge_proj(w_ij)
         residue_update_out = self.residue_update(t_ij)
 
-        return edge_proj_out + residue_update_out
+        return edge_proj_out * residue_update_out
 
 # geometry-aware tensor attention
 # section 3.3
@@ -612,7 +622,8 @@ class GotenNet(Module):
         proj_invariant_dim = None,
         final_norm = True,
         add_value_residual = True,
-        num_residual_streams = 4
+        num_residual_streams = 4,
+        htr_kwargs: dict = dict()
     ):
         super().__init__()
         self.accept_embed = accept_embed
@@ -655,7 +666,7 @@ class GotenNet(Module):
             is_first = layer_index == 0
 
             self.layers.append(ModuleList([
-                HierarchicalTensorRefinement(dim, dim_edge_refinement, max_degree),
+                HierarchicalTensorRefinement(dim, dim_edge_refinement, max_degree, **htr_kwargs),
                 GeometryAwareTensorAttention(dim, max_degree, dim_head, heads, mlp_expansion_factor, learned_value_residual_mix = add_value_residual and not is_first),
                 EquivariantFeedForward(dim, max_degree, mlp_expansion_factor),
             ]))
@@ -785,6 +796,7 @@ class GotenNet(Module):
             # add attention residuals
 
             h = add_attn_residual(h_residual)
+
             x = [*map(sum, zip(x, x_residuals))]
 
             # handle value residual
@@ -800,6 +812,7 @@ class GotenNet(Module):
             # add feedforward residuals
 
             h = add_ff_residual(h_residual)
+
             x = [*map(sum, zip(x, x_residuals))]
   
         h = self.reduce_streams(h)
