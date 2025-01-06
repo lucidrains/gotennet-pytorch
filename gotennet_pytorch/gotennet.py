@@ -20,6 +20,8 @@ from gotennet_pytorch.tensor_typing import Float, Int, Bool
 
 from hyper_connections import get_init_and_expand_reduce_stream_functions
 
+from x_transformers import Attention
+
 # ein notation
 
 # b - batch
@@ -603,6 +605,22 @@ class GeometryAwareTensorAttention(Module):
 
         return out, next_value_residuals
 
+# full attention
+
+class InvariantAttention(Module):
+    def __init__(
+        self,
+        dim,
+        **attn_kwargs
+    ):
+        super().__init__()
+        self.norm = nn.RMSNorm(dim)
+        self.attn = Attention(dim, **attn_kwargs)
+
+    def forward(self, h, mask = None):
+        h = self.norm(h)
+        return self.attn(h, mask = mask)
+
 # main class
 
 class GotenNet(Module):
@@ -617,6 +635,9 @@ class GotenNet(Module):
         heads = 8,
         dim_head = None,
         cutoff_radius = None,
+        invariant_full_attn = False,
+        invariant_attn_use_flash = False,
+        full_attn_kwargs: dict = dict(),
         max_neighbors = float('inf'),
         mlp_expansion_factor = 2.,
         edge_init_mlp_expansion_factor = 4.,
@@ -670,11 +691,13 @@ class GotenNet(Module):
 
             self.layers.append(ModuleList([
                 HierarchicalTensorRefinement(dim, dim_edge_refinement, max_degree, **htr_kwargs),
+                InvariantAttention(dim = dim, flash = invariant_attn_use_flash, **full_attn_kwargs) if invariant_full_attn else None,
                 GeometryAwareTensorAttention(dim, max_degree, dim_head, heads, mlp_expansion_factor, learned_value_residual_mix = add_value_residual and not is_first),
                 EquivariantFeedForward(dim, max_degree, mlp_expansion_factor),
             ]))
 
             self.residual_fns.append(ModuleList([
+                init_hyper_conn(dim = dim) if invariant_full_attn else None,
                 init_hyper_conn(dim = dim),
                 init_hyper_conn(dim = dim),
             ]))
@@ -790,15 +813,24 @@ class GotenNet(Module):
 
         # go through the layers
 
-        for (htr, attn, ff), (h_attn_residual_fn, h_ff_residual_fn) in zip(self.layers, self.residual_fns):
+        for (htr, maybe_h_attn, attn, ff), (maybe_h_attn_residual_fn, attn_residual_fn, ff_residual_fn) in zip(self.layers, self.residual_fns):
 
             # hierarchical tensor refinement
 
             t_ij = htr(t_ij, x, neighbor_indices = neighbor_indices)
 
+            # maybe full flash attention across invariants
+
+            if exists(maybe_h_attn):
+                h, add_h_attn_residual = maybe_h_attn_residual_fn(h)
+
+                h = maybe_h_attn(h, mask = mask)
+
+                h = add_h_attn_residual(h)
+
             # followed by attention, but of course
 
-            h, add_attn_residual = h_attn_residual_fn(h)
+            h, add_attn_residual = attn_residual_fn(h)
 
             (h_residual, x_residuals), next_value_residuals = attn(h, t_ij, r_ij, x, mask = mask, neighbor_indices = neighbor_indices, neighbor_mask = neighbor_mask, value_residuals = value_residuals, return_value_residual = True)
 
@@ -814,7 +846,7 @@ class GotenNet(Module):
 
             # feedforward
 
-            h, add_ff_residual = h_ff_residual_fn(h)
+            h, add_ff_residual = ff_residual_fn(h)
 
             h_residual, x_residuals = ff(h, x)
 

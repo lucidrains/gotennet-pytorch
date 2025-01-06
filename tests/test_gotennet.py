@@ -41,7 +41,8 @@ def rot(alpha, beta, gamma):
 from gotennet_pytorch.gotennet import GotenNet, torch_default_dtype
 
 @torch_default_dtype(torch.float64)
-def test_invariant():
+@pytest.mark.parametrize('invariant_full_attn', (False, True))
+def test_invariant(invariant_full_attn):
     model = GotenNet(
         dim = 256,
         max_degree = 2,
@@ -49,6 +50,7 @@ def test_invariant():
         heads = 2,
         dim_head = 32,
         dim_edge_refinement = 256,
+        invariant_full_attn = invariant_full_attn,
         return_coors = False,
         ff_kwargs = dict(
             layernorm_input = True
@@ -69,7 +71,11 @@ def test_invariant():
 
 @torch_default_dtype(torch.float64)
 @pytest.mark.parametrize('num_residual_streams', (1, 4))
-def test_equivariant(num_residual_streams):
+@pytest.mark.parametrize('invariant_full_attn', (False, True))
+def test_equivariant(
+    num_residual_streams,
+    invariant_full_attn
+):
 
     model = GotenNet(
         dim = 256,
@@ -79,6 +85,7 @@ def test_equivariant(num_residual_streams):
         dim_head = 32,
         dim_edge_refinement = 256,
         return_coors = True,
+        invariant_full_attn = invariant_full_attn,
         ff_kwargs = dict(
             layernorm_input = True
         ),
