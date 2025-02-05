@@ -16,6 +16,8 @@ $ pip install gotennet-pytorch
 
 ```python
 import torch
+torch.set_default_dtype(torch.float64) # recommended for equivariant network training
+
 from gotennet_pytorch import GotenNet
 
 model = GotenNet(
