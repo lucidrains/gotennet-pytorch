@@ -341,7 +341,7 @@ class HierarchicalTensorRefinement(Module):
         edge_proj_out = self.edge_proj(w_ij)
         residue_update_out = self.residue_update(t_ij)
 
-        return edge_proj_out * residue_update_out
+        return edge_proj_out + residue_update_out
 
 # geometry-aware tensor attention
 # section 3.3
