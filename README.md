@@ -6,6 +6,8 @@ Implementation of <a href="https://openreview.net/forum?id=5wxCQDtbMo">GotenNet<
 
 I know a lot of researchers have moved on from geometric learning after Alphafold3. However, I just cannot help but <a href="https://arxiv.org/abs/2410.11443">wonder</a>. Hedging my bets
 
+The official repository has been released [here](https://github.com/sarpaykent/GotenNet/)
+
 ## Install
 
 ```bash
