@@ -339,6 +339,8 @@ class HierarchicalTensorRefinement(Module):
         # eq (12)
 
         edge_proj_out = self.edge_proj(w_ij)
+        edge_proj_out = torch.sigmoid(edge_proj_out)
+
         residue_update_out = self.residue_update(t_ij)
 
         return edge_proj_out + residue_update_out
@@ -817,7 +819,7 @@ class GotenNet(Module):
 
             # hierarchical tensor refinement
 
-            t_ij = htr(t_ij, x, neighbor_indices = neighbor_indices)
+            t_ij = htr(t_ij, x, neighbor_indices = neighbor_indices) + t_ij
 
             # maybe full flash attention across invariants
 
